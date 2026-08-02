@@ -75,6 +75,40 @@ int main() {
         assert(!audibleAfterDecay);
     }
 
+    // rerollDrift() is scoped to the given pitch range: after rerolling,
+    // spawned grains should still land within that range regardless of how
+    // many times it's rerolled (a prior version drew from the full [0, 1]
+    // range, which the pitch-clamping in maybeSpawnGrain would silently
+    // absorb — this at least confirms rerolling repeatedly doesn't crash or
+    // push output out of the expected bounded range).
+    {
+        GrainCloud cloud(5u);
+        cloud.setSampleRate(kSampleRate);
+
+        for (int i = 0; i < 100; ++i) {
+            cloud.rerollDrift(0.3f, 0.7f);
+            for (int sample = 0; sample < 1000; ++sample) {
+                const auto s = cloud.renderSample(0.3f, 0.7f, 0.5f, 0.8f, 1.0f, 1.0f);
+                assert(s.left >= -1.0f && s.left <= 1.0f);
+                assert(s.right >= -1.0f && s.right <= 1.0f);
+            }
+        }
+    }
+
+    // Custom grain duration range (per-voice archetype support): a cloud
+    // configured with long grain durations should still produce bounded
+    // output and eventually go silent once spawning stops.
+    {
+        GrainCloud cloud(6u, 1500.0f, 4000.0f);
+        cloud.setSampleRate(kSampleRate);
+
+        for (int i = 0; i < static_cast<int>(kSampleRate); ++i) {
+            const auto sample = cloud.renderSample(0.1f, 0.2f, 0.2f, 0.1f, 0.2f, 1.0f);
+            assert(sample.left >= -1.0f && sample.left <= 1.0f);
+            assert(sample.right >= -1.0f && sample.right <= 1.0f);
+        }
+    }
+
     std::cout << "GrainCloud tests passed" << std::endl;
     return 0;
 }

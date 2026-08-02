@@ -53,6 +53,15 @@ target_include_directories(GrainCloudTests
         ${CMAKE_CURRENT_SOURCE_DIR}/Sources/JerricanApp
 )
 
+add_executable(EvolutionEngineTests
+    Tests/EvolutionEngineTest.cpp
+)
+
+target_include_directories(EvolutionEngineTests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Sources/JerricanApp
+)
+
 target_compile_definitions(JerricanApp
     PRIVATE
         JUCE_WEB_BROWSER=0

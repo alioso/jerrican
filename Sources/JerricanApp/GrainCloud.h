@@ -18,15 +18,25 @@ class GrainCloud {
 public:
     static constexpr int kMaxGrains = 24;
 
-    explicit GrainCloud(std::uint32_t seed = 0x2545f491u) : random_(seed) {}
+    // minGrainDurationMs/maxGrainDurationMs are the main lever for a
+    // voice's fundamental character: short & sparse reads as pointillistic,
+    // long & overlapping reads as a sustained drone. Defaults match the
+    // original one-size-fits-all range.
+    explicit GrainCloud(std::uint32_t seed = 0x2545f491u, float minGrainDurationMs = 40.0f,
+                         float maxGrainDurationMs = 250.0f)
+        : random_(seed),
+          minGrainDurationMs_(minGrainDurationMs),
+          maxGrainDurationMs_(maxGrainDurationMs) {}
 
     void setSampleRate(double sampleRate) { sampleRate_ = sampleRate; }
 
     // Immediately jumps the drift/breathing targets to new random values —
     // used by the Randomize button as a generative nudge rather than a
-    // hard parameter snap.
-    void rerollDrift() {
-        driftTarget_ = random_.nextFloat01();
+    // hard parameter snap. Scoped to the voice's current pitch range, same
+    // as the autonomous drift in updateDrift() — otherwise the new target
+    // just gets clamped straight back to the range edge it's already at.
+    void rerollDrift(float pitchRangeLow, float pitchRangeHigh) {
+        driftTarget_ = random_.nextFloatRange(pitchRangeLow, pitchRangeHigh);
         breathingTarget_ = random_.nextFloatRange(0.3f, 1.0f);
     }
 
@@ -86,7 +96,7 @@ private:
             const float lo = std::max(low, std::min(high, driftCenter_ - spread));
             const float hi = std::max(low, std::min(high, driftCenter_ + spread));
             const float pitch = random_.nextFloatRange(std::min(lo, hi), std::max(lo, hi));
-            const float durationMs = random_.nextFloatRange(minGrainDurationMs, maxGrainDurationMs);
+            const float durationMs = random_.nextFloatRange(minGrainDurationMs_, maxGrainDurationMs_);
             const float pan = random_.nextFloat01();
 
             grain.trigger(pickWaveform(timbre), sampleRate_, pitch, durationMs, pan);
@@ -115,12 +125,12 @@ private:
     static constexpr float driftPickRateSpanHz = 0.45f;
     static constexpr float localSpreadFraction = 0.15f;
     static constexpr float maxGrainsPerSecond = 40.0f;
-    static constexpr float minGrainDurationMs = 40.0f;
-    static constexpr float maxGrainDurationMs = 250.0f;
 
     double sampleRate_ = 44100.0;
     std::array<Grain, kMaxGrains> grains_;
     FastRandom random_;
+    float minGrainDurationMs_;
+    float maxGrainDurationMs_;
     float driftCenter_ = 0.5f;
     float driftTarget_ = 0.5f;
     float breathingGain_ = 1.0f;

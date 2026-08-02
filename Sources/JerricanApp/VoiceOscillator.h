@@ -22,6 +22,7 @@ public:
     void reset() {
         phase_ = 0.0;
         modPhase_ = 0.0;
+        noiseFilterState_ = 0.0f;
     }
 
     // normalizedPitch is expected in [0, 1]; returns a sample in [-1, 1].
@@ -37,9 +38,20 @@ public:
             case Waveform::Saw:
                 sample = static_cast<float>(2.0 * phase_ - 1.0);
                 break;
-            case Waveform::Noise:
-                sample = noise_.nextFloatRange(-1.0f, 1.0f);
+            case Waveform::Noise: {
+                // Band-limited ("colored") noise: a one-pole lowpass over
+                // white noise, cutoff tied to the grain's pitch. Without
+                // this, Noise is deaf to Pitch Range and just reads as flat
+                // broadband hiss; filtering makes it a pitched texture
+                // instead.
+                const float cutoffHz = static_cast<float>(frequency) * noiseBrightnessMultiplier;
+                const float filterCoefficient =
+                    1.0f - std::exp(-static_cast<float>(twoPi) * cutoffHz / static_cast<float>(sampleRate_));
+                const float whiteNoise = noise_.nextFloatRange(-1.0f, 1.0f);
+                noiseFilterState_ += (whiteNoise - noiseFilterState_) * filterCoefficient;
+                sample = noiseFilterState_;
                 break;
+            }
             case Waveform::Fm: {
                 const double modulator = std::sin(modPhase_ * twoPi);
                 sample = static_cast<float>(std::sin(phase_ * twoPi + fmModulationIndex * modulator));
@@ -57,7 +69,8 @@ private:
     static constexpr double minFrequencyHz = 55.0;   // A1
     static constexpr double maxFrequencyHz = 880.0;  // A5
     static constexpr double fmModulatorRatio = 2.0;
-    static constexpr double fmModulationIndex = 3.0;
+    static constexpr double fmModulationIndex = 1.8;
+    static constexpr float noiseBrightnessMultiplier = 4.0f;
 
     static double frequencyFromNormalizedPitch(float normalizedPitch) {
         const double t = std::max(0.0f, std::min(1.0f, normalizedPitch));
@@ -70,5 +83,6 @@ private:
     double sampleRate_ = 44100.0;
     double phase_ = 0.0;
     double modPhase_ = 0.0;
+    float noiseFilterState_ = 0.0f;
     FastRandom noise_{0x1234567u};
 };

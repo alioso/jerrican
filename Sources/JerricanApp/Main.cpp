@@ -3,10 +3,14 @@
 #include <algorithm>
 #include <array>
 
+#include "EvolutionEngine.h"
 #include "GrainCloud.h"
 #include "VoiceModel.h"
 
-class JerricanEditor : public juce::AudioAppComponent, private juce::Button::Listener {
+class JerricanEditor : public juce::AudioAppComponent,
+                        private juce::Button::Listener,
+                        private juce::Slider::Listener,
+                        private juce::Timer {
 public:
     JerricanEditor()
         : voices_{VoiceModel(kInitialVoices[0].name, kInitialVoices[0].enabled,
@@ -25,8 +29,24 @@ public:
                               kInitialVoices[3].volume, kInitialVoices[3].pitchLow,
                               kInitialVoices[3].pitchHigh, kInitialVoices[3].timbre,
                               kInitialVoices[3].motion, kInitialVoices[3].complexity)},
-          grainClouds_{GrainCloud(0x1a2b3c4du), GrainCloud(0x5e6f7081u), GrainCloud(0x92a3b4c5u),
-                       GrainCloud(0xd6e7f809u)} {
+          grainClouds_{GrainCloud(0x1a2b3c4du, kInitialVoices[0].minGrainDurationMs,
+                                   kInitialVoices[0].maxGrainDurationMs),
+                       GrainCloud(0x5e6f7081u, kInitialVoices[1].minGrainDurationMs,
+                                   kInitialVoices[1].maxGrainDurationMs),
+                       GrainCloud(0x92a3b4c5u, kInitialVoices[2].minGrainDurationMs,
+                                   kInitialVoices[2].maxGrainDurationMs),
+                       GrainCloud(0xd6e7f809u, kInitialVoices[3].minGrainDurationMs,
+                                   kInitialVoices[3].maxGrainDurationMs)},
+          evolutionEngines_{EvolutionEngine(0x37a1f2c9u), EvolutionEngine(0x6b4d8e12u),
+                             EvolutionEngine(0xa9c3f501u), EvolutionEngine(0xe1d47b6au)} {
+        for (size_t i = 0; i < voices_.size(); ++i) {
+            const auto& initial = kInitialVoices[i];
+            const float center = (initial.pitchLow + initial.pitchHigh) * 0.5f;
+            const float width = initial.pitchHigh - initial.pitchLow;
+            evolutionEngines_[i].resetTo(center, width, initial.timbre, initial.motion,
+                                          initial.complexity);
+        }
+
         addAndMakeVisible(titleLabel);
         titleLabel.setText("Jerrican", juce::dontSendNotification);
         titleLabel.setFont(juce::Font(juce::FontOptions(28.0f)).withStyle(juce::Font::bold));
@@ -54,6 +74,19 @@ public:
         randomizeButton.setButtonText("Randomize");
         randomizeButton.addListener(this);
 
+        addAndMakeVisible(evolutionLabel);
+        evolutionLabel.setText("Evolution", juce::dontSendNotification);
+        evolutionLabel.setFont(juce::Font(juce::FontOptions(12.0f)));
+        evolutionLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+
+        addAndMakeVisible(evolutionSlider);
+        evolutionSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+        evolutionSlider.setRange(0.0, 1.0);
+        evolutionSlider.setValue(0.0);
+        evolutionSlider.setNumDecimalPlacesToDisplay(2);
+        evolutionSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 56, 20);
+        evolutionSlider.addListener(this);
+
         addAndMakeVisible(statusLabel);
         statusLabel.setText("Transport idle", juce::dontSendNotification);
         statusLabel.setFont(juce::Font(juce::FontOptions(14.0f)));
@@ -73,6 +106,7 @@ public:
 
         setSize(1180, 920);
         setAudioChannels(0, 2);
+        startTimerHz(30);
     }
 
     ~JerricanEditor() override { shutdownAudio(); }
@@ -90,7 +124,11 @@ public:
         playButton.setBounds(40, getHeight() - 80, 120, 36);
         stopButton.setBounds(180, getHeight() - 80, 140, 36);
         randomizeButton.setBounds(340, getHeight() - 80, 140, 36);
-        statusLabel.setBounds(520, getHeight() - 80, getWidth() - 560, 24);
+
+        evolutionLabel.setBounds(500, getHeight() - 96, 160, 14);
+        evolutionSlider.setBounds(500, getHeight() - 80, 220, 24);
+
+        statusLabel.setBounds(740, getHeight() - 80, getWidth() - 780, 24);
 
         voiceHeaderLabel.setBounds(40, 120, 200, 28);
 
@@ -109,6 +147,9 @@ public:
         for (auto& cloud : grainClouds_) {
             cloud.setSampleRate(sampleRate);
         }
+        for (auto& engine : evolutionEngines_) {
+            engine.setSampleRate(sampleRate);
+        }
     }
 
     void releaseResources() override {}
@@ -120,6 +161,7 @@ public:
                           : nullptr;
 
         const bool playing = isPlaying_.load(std::memory_order_relaxed);
+        const float evolution = evolution_.load(std::memory_order_relaxed);
 
         for (int sample = 0; sample < bufferToFill.numSamples; ++sample) {
             float mixedLeft = 0.0f;
@@ -128,6 +170,12 @@ public:
             for (size_t i = 0; i < voices_.size(); ++i) {
                 auto& voice = voices_[i];
                 auto& cloud = grainClouds_[i];
+
+                // Evolution runs regardless of transport state — the
+                // macros keep drifting "on their own" even while stopped,
+                // it just isn't audible until Play (matching the transport
+                // gate below, not a special case here).
+                evolutionEngines_[i].update(voice, evolution);
 
                 // Already-active grains ring out on their own envelope even
                 // after Stop; only new spawning is gated by the transport,
@@ -160,13 +208,22 @@ private:
         float timbre;
         float motion;
         float complexity;
+        float minGrainDurationMs;
+        float maxGrainDurationMs;
     };
 
+    // Grain duration range is the main lever for a voice's fundamental
+    // character (see GrainCloud) — short & sparse reads as pointillistic,
+    // long & overlapping reads as a sustained drone. Complexity is tuned
+    // per archetype to suit that duration range: expected concurrent grains
+    // is roughly complexity * 40/sec * average-duration-seconds, so a
+    // Drone's long grains need a much lower Complexity number than a
+    // Pulse's short ones to reach a comparable density.
     static constexpr std::array<InitialVoice, 4> kInitialVoices{
-        {{"Pulse", true, 0.70f, 0.45f, 0.65f, 0.00f, 0.30f, 0.40f},
-         {"Drone", true, 0.60f, 0.05f, 0.25f, 0.33f, 0.15f, 0.20f},
-         {"Spark", true, 0.55f, 0.60f, 0.95f, 1.00f, 0.70f, 0.75f},
-         {"Echo", false, 0.50f, 0.30f, 0.80f, 0.66f, 0.60f, 0.50f}}};
+        {{"Pulse", true, 0.70f, 0.45f, 0.60f, 0.15f, 0.35f, 0.12f, 20.0f, 70.0f},
+         {"Drone", true, 0.60f, 0.05f, 0.20f, 0.15f, 0.10f, 0.12f, 1500.0f, 4000.0f},
+         {"Spark", true, 0.55f, 0.65f, 0.95f, 0.85f, 0.60f, 0.85f, 30.0f, 120.0f},
+         {"Echo", false, 0.50f, 0.30f, 0.80f, 0.60f, 0.65f, 0.45f, 80.0f, 200.0f}}};
 
     class VoiceRow : public juce::Component, private juce::Button::Listener, private juce::Slider::Listener {
     public:
@@ -262,16 +319,31 @@ private:
         }
 
         // Reflects the current model state into the controls, without
-        // triggering listener callbacks (used after Stop/Reset).
+        // triggering listener callbacks (used after Stop/Reset and by the
+        // Evolution auto-refresh timer). Skips any control the user is
+        // currently dragging, so autonomous evolution doesn't fight a live
+        // gesture.
         void refreshFromModel() {
-            enabledButton_.setToggleState(voiceRef_.isEnabled(), juce::dontSendNotification);
-            volumeSlider_.setValue(voiceRef_.getVolume(), juce::dontSendNotification);
-            pitchRangeSlider_.setMinAndMaxValues(voiceRef_.getPitchRangeLow(),
-                                                  voiceRef_.getPitchRangeHigh(),
-                                                  juce::dontSendNotification);
-            timbreSlider_.setValue(voiceRef_.getTimbre(), juce::dontSendNotification);
-            motionSlider_.setValue(voiceRef_.getMotion(), juce::dontSendNotification);
-            complexitySlider_.setValue(voiceRef_.getComplexity(), juce::dontSendNotification);
+            if (!enabledButton_.isMouseButtonDown()) {
+                enabledButton_.setToggleState(voiceRef_.isEnabled(), juce::dontSendNotification);
+            }
+            if (!volumeSlider_.isMouseButtonDown()) {
+                volumeSlider_.setValue(voiceRef_.getVolume(), juce::dontSendNotification);
+            }
+            if (!pitchRangeSlider_.isMouseButtonDown()) {
+                pitchRangeSlider_.setMinAndMaxValues(voiceRef_.getPitchRangeLow(),
+                                                      voiceRef_.getPitchRangeHigh(),
+                                                      juce::dontSendNotification);
+            }
+            if (!timbreSlider_.isMouseButtonDown()) {
+                timbreSlider_.setValue(voiceRef_.getTimbre(), juce::dontSendNotification);
+            }
+            if (!motionSlider_.isMouseButtonDown()) {
+                motionSlider_.setValue(voiceRef_.getMotion(), juce::dontSendNotification);
+            }
+            if (!complexitySlider_.isMouseButtonDown()) {
+                complexitySlider_.setValue(voiceRef_.getComplexity(), juce::dontSendNotification);
+            }
         }
 
     private:
@@ -314,12 +386,29 @@ private:
             resetVoicesToInitialState();
             statusLabel.setText("Transport stopped — voices reset", juce::dontSendNotification);
         } else if (button == &randomizeButton) {
-            for (auto& cloud : grainClouds_) {
-                cloud.rerollDrift();
+            for (size_t i = 0; i < voices_.size(); ++i) {
+                grainClouds_[i].rerollDrift(voices_[i].getPitchRangeLow(),
+                                             voices_[i].getPitchRangeHigh());
             }
         }
 
         updateStatusSummary();
+    }
+
+    void sliderValueChanged(juce::Slider* slider) override {
+        if (slider == &evolutionSlider) {
+            evolution_.store(static_cast<float>(evolutionSlider.getValue()),
+                              std::memory_order_relaxed);
+        }
+    }
+
+    void timerCallback() override {
+        if (evolution_.load(std::memory_order_relaxed) <= 0.0f) {
+            return;
+        }
+        for (auto& row : voiceRows_) {
+            row->refreshFromModel();
+        }
     }
 
     void resetVoicesToInitialState() {
@@ -332,6 +421,11 @@ private:
             voices_[i].setMotion(initial.motion);
             voices_[i].setComplexity(initial.complexity);
             voiceRows_[i]->refreshFromModel();
+
+            const float center = (initial.pitchLow + initial.pitchHigh) * 0.5f;
+            const float width = initial.pitchHigh - initial.pitchLow;
+            evolutionEngines_[i].resetTo(center, width, initial.timbre, initial.motion,
+                                          initial.complexity);
         }
     }
 
@@ -359,9 +453,13 @@ private:
     juce::TextButton playButton;
     juce::TextButton stopButton;
     juce::TextButton randomizeButton;
+    juce::Label evolutionLabel;
+    juce::Slider evolutionSlider;
     std::atomic<bool> isPlaying_{false};
+    std::atomic<float> evolution_{0.0f};
     std::array<VoiceModel, 4> voices_;
     std::array<GrainCloud, 4> grainClouds_;
+    std::array<EvolutionEngine, 4> evolutionEngines_;
     std::array<std::unique_ptr<VoiceRow>, 4> voiceRows_;
 };
 
