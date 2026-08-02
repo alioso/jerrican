@@ -76,7 +76,9 @@ Run the regression tests directly as built binaries, e.g.:
 
 ## Next direction
 
-Voice personalities (Drone/Pulse/Spark/Echo) need more distinct sonic
-identity, some grain artifacts need cleanup, and a global "Evolution"
-meta-control is planned to let the generative macros themselves drift
-autonomously over time, rather than only the grains within a fixed setting.
+Four voices, two archetypes: Drone and Haze are `Character::Ambient`
+(smooth, unfiltered, sustained pads), Pulse and Spark are
+`Character::Plucked` (fast-attack, filter-swept grains — a produced pluck
+rather than a static tone). A global "Evolution" meta-control lets the
+generative macros themselves drift autonomously over time, rather than only
+the grains within a fixed setting.

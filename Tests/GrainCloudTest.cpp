@@ -109,6 +109,34 @@ int main() {
         }
     }
 
+    // Character::Plucked (filter sweep + percussive envelope): output must
+    // still stay bounded, and grains must still spawn and eventually decay
+    // to silence, same contract as the default Ambient character.
+    {
+        GrainCloud cloud(7u, 60.0f, 180.0f, Grain::Character::Plucked);
+        cloud.setSampleRate(kSampleRate);
+
+        bool everAudible = false;
+        for (int i = 0; i < static_cast<int>(kSampleRate); ++i) {
+            const auto sample = cloud.renderSample(0.4f, 0.65f, 0.4f, 0.3f, 1.0f, 1.0f);
+            assert(sample.left >= -1.0f && sample.left <= 1.0f);
+            assert(sample.right >= -1.0f && sample.right <= 1.0f);
+            if (sample.left != 0.0f || sample.right != 0.0f) {
+                everAudible = true;
+            }
+        }
+        assert(everAudible);
+
+        bool audibleAfterDecay = false;
+        for (int i = 0; i < static_cast<int>(kSampleRate); ++i) {
+            const auto sample = cloud.renderSample(0.4f, 0.65f, 0.4f, 0.3f, 0.0f, 1.0f);
+            if (i > static_cast<int>(kSampleRate) / 2 && (sample.left != 0.0f || sample.right != 0.0f)) {
+                audibleAfterDecay = true;
+            }
+        }
+        assert(!audibleAfterDecay);
+    }
+
     std::cout << "GrainCloud tests passed" << std::endl;
     return 0;
 }

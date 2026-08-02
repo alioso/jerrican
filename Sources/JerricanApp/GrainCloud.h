@@ -21,12 +21,16 @@ public:
     // minGrainDurationMs/maxGrainDurationMs are the main lever for a
     // voice's fundamental character: short & sparse reads as pointillistic,
     // long & overlapping reads as a sustained drone. Defaults match the
-    // original one-size-fits-all range.
+    // original one-size-fits-all range. `character` picks the grain
+    // envelope/filter treatment (see Grain::Character) — fixed per voice,
+    // same tier as the duration range.
     explicit GrainCloud(std::uint32_t seed = 0x2545f491u, float minGrainDurationMs = 40.0f,
-                         float maxGrainDurationMs = 250.0f)
+                         float maxGrainDurationMs = 250.0f,
+                         Grain::Character character = Grain::Character::Ambient)
         : random_(seed),
           minGrainDurationMs_(minGrainDurationMs),
-          maxGrainDurationMs_(maxGrainDurationMs) {}
+          maxGrainDurationMs_(maxGrainDurationMs),
+          character_(character) {}
 
     void setSampleRate(double sampleRate) { sampleRate_ = sampleRate; }
 
@@ -99,7 +103,7 @@ private:
             const float durationMs = random_.nextFloatRange(minGrainDurationMs_, maxGrainDurationMs_);
             const float pan = random_.nextFloat01();
 
-            grain.trigger(pickWaveform(timbre), sampleRate_, pitch, durationMs, pan);
+            grain.trigger(pickWaveform(timbre), sampleRate_, pitch, durationMs, pan, character_);
             return;
         }
     }
@@ -131,6 +135,7 @@ private:
     FastRandom random_;
     float minGrainDurationMs_;
     float maxGrainDurationMs_;
+    Grain::Character character_;
     float driftCenter_ = 0.5f;
     float driftTarget_ = 0.5f;
     float breathingGain_ = 1.0f;

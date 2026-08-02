@@ -17,6 +17,13 @@ public:
     void setWaveform(Waveform waveform) { waveform_ = waveform; }
     void setSampleRate(double sampleRate) { sampleRate_ = sampleRate; }
 
+    // Shared with Grain's filter envelope, which needs the same
+    // pitch->Hz mapping to compute its fundamental-relative cutoff.
+    static double frequencyFromNormalizedPitch(float normalizedPitch) {
+        const double t = std::max(0.0f, std::min(1.0f, normalizedPitch));
+        return minFrequencyHz * std::pow(maxFrequencyHz / minFrequencyHz, t);
+    }
+
     // Resets phase state so a re-triggered grain doesn't inherit a stale
     // waveform's phase relationship.
     void reset() {
@@ -71,11 +78,6 @@ private:
     static constexpr double fmModulatorRatio = 2.0;
     static constexpr double fmModulationIndex = 1.8;
     static constexpr float noiseBrightnessMultiplier = 4.0f;
-
-    static double frequencyFromNormalizedPitch(float normalizedPitch) {
-        const double t = std::max(0.0f, std::min(1.0f, normalizedPitch));
-        return minFrequencyHz * std::pow(maxFrequencyHz / minFrequencyHz, t);
-    }
 
     static double wrapPhase(double phase) { return phase - std::floor(phase); }
 

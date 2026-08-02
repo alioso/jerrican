@@ -12,6 +12,7 @@ juce_add_gui_app(JerricanApp
     VERSION "0.1.0"
     NEEDS_WEB_BROWSER FALSE
     NEEDS_CURL FALSE
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon.png"
 )
 
 juce_generate_juce_header(JerricanApp)

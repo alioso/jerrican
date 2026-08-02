@@ -4,6 +4,7 @@
 #include <array>
 
 #include "EvolutionEngine.h"
+#include "Grain.h"
 #include "GrainCloud.h"
 #include "VoiceModel.h"
 
@@ -30,13 +31,13 @@ public:
                               kInitialVoices[3].pitchHigh, kInitialVoices[3].timbre,
                               kInitialVoices[3].motion, kInitialVoices[3].complexity)},
           grainClouds_{GrainCloud(0x1a2b3c4du, kInitialVoices[0].minGrainDurationMs,
-                                   kInitialVoices[0].maxGrainDurationMs),
+                                   kInitialVoices[0].maxGrainDurationMs, kInitialVoices[0].character),
                        GrainCloud(0x5e6f7081u, kInitialVoices[1].minGrainDurationMs,
-                                   kInitialVoices[1].maxGrainDurationMs),
+                                   kInitialVoices[1].maxGrainDurationMs, kInitialVoices[1].character),
                        GrainCloud(0x92a3b4c5u, kInitialVoices[2].minGrainDurationMs,
-                                   kInitialVoices[2].maxGrainDurationMs),
+                                   kInitialVoices[2].maxGrainDurationMs, kInitialVoices[2].character),
                        GrainCloud(0xd6e7f809u, kInitialVoices[3].minGrainDurationMs,
-                                   kInitialVoices[3].maxGrainDurationMs)},
+                                   kInitialVoices[3].maxGrainDurationMs, kInitialVoices[3].character)},
           evolutionEngines_{EvolutionEngine(0x37a1f2c9u), EvolutionEngine(0x6b4d8e12u),
                              EvolutionEngine(0xa9c3f501u), EvolutionEngine(0xe1d47b6au)} {
         for (size_t i = 0; i < voices_.size(); ++i) {
@@ -210,6 +211,7 @@ private:
         float complexity;
         float minGrainDurationMs;
         float maxGrainDurationMs;
+        Grain::Character character;
     };
 
     // Grain duration range is the main lever for a voice's fundamental
@@ -219,11 +221,22 @@ private:
     // is roughly complexity * 40/sec * average-duration-seconds, so a
     // Drone's long grains need a much lower Complexity number than a
     // Pulse's short ones to reach a comparable density.
+    //
+    // Character::Plucked (Pulse/Spark) gets a fast-attack envelope and a
+    // bright-to-dark filter sweep per grain — what makes them read as
+    // produced instruments rather than static bleeps. Character::Ambient
+    // (Drone/Haze) is the original unfiltered symmetric envelope. Drone's
+    // row is unchanged from before Character existed — Ambient just names
+    // what it already did.
     static constexpr std::array<InitialVoice, 4> kInitialVoices{
-        {{"Pulse", true, 0.70f, 0.45f, 0.60f, 0.15f, 0.35f, 0.12f, 20.0f, 70.0f},
-         {"Drone", true, 0.60f, 0.05f, 0.20f, 0.15f, 0.10f, 0.12f, 1500.0f, 4000.0f},
-         {"Spark", true, 0.55f, 0.65f, 0.95f, 0.85f, 0.60f, 0.85f, 30.0f, 120.0f},
-         {"Echo", false, 0.50f, 0.30f, 0.80f, 0.60f, 0.65f, 0.45f, 80.0f, 200.0f}}};
+        {{"Pulse", true, 0.65f, 0.40f, 0.65f, 0.40f, 0.30f, 0.10f, 60.0f, 180.0f,
+          Grain::Character::Plucked},
+         {"Drone", true, 0.60f, 0.05f, 0.20f, 0.15f, 0.10f, 0.12f, 1500.0f, 4000.0f,
+          Grain::Character::Ambient},
+         {"Spark", true, 0.55f, 0.60f, 0.90f, 0.70f, 0.35f, 0.30f, 40.0f, 100.0f,
+          Grain::Character::Plucked},
+         {"Haze", true, 0.50f, 0.15f, 0.35f, 0.75f, 0.20f, 0.15f, 2000.0f, 5000.0f,
+          Grain::Character::Ambient}}};
 
     class VoiceRow : public juce::Component, private juce::Button::Listener, private juce::Slider::Listener {
     public:
