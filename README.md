@@ -1,6 +1,6 @@
 # Jerrican
 
-Jerrican is a macOS-native generative music instrument being built as a serious native app rather than a prototype. The project is now centered on a clean C++ and JUCE foundation with a clear instrument architecture: a transport layer, a bank of voices, and a set of per-voice controls that can evolve into a full realtime sound engine.
+    . Centered on a clean C++ and JUCE foundation with a clear instrument architecture: a transport layer, a bank of voices, and a set of per-voice controls that can evolve into a full realtime sound engine.
 
 ## Approach
 

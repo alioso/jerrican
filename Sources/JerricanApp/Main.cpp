@@ -2,22 +2,31 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdlib>
 
+#include "GrainCloud.h"
 #include "VoiceModel.h"
-#include "VoiceOscillator.h"
 
 class JerricanEditor : public juce::AudioAppComponent, private juce::Button::Listener {
 public:
-    JerricanEditor() : voices_{
-            VoiceModel("Pulse", "Sine", true, 0.82f, 0.58f),
-            VoiceModel("Drone", "Saw", true, 0.74f, 0.35f),
-            VoiceModel("Spark", "Noise", true, 0.66f, 0.78f),
-            VoiceModel("Echo", "FM", false, 0.54f, 0.48f)},
-        oscillators_{VoiceOscillator(voices_[0].getInstrument()),
-                     VoiceOscillator(voices_[1].getInstrument()),
-                     VoiceOscillator(voices_[2].getInstrument()),
-                     VoiceOscillator(voices_[3].getInstrument())} {
+    JerricanEditor()
+        : voices_{VoiceModel(kInitialVoices[0].name, kInitialVoices[0].enabled,
+                              kInitialVoices[0].volume, kInitialVoices[0].pitchLow,
+                              kInitialVoices[0].pitchHigh, kInitialVoices[0].timbre,
+                              kInitialVoices[0].motion, kInitialVoices[0].complexity),
+                  VoiceModel(kInitialVoices[1].name, kInitialVoices[1].enabled,
+                              kInitialVoices[1].volume, kInitialVoices[1].pitchLow,
+                              kInitialVoices[1].pitchHigh, kInitialVoices[1].timbre,
+                              kInitialVoices[1].motion, kInitialVoices[1].complexity),
+                  VoiceModel(kInitialVoices[2].name, kInitialVoices[2].enabled,
+                              kInitialVoices[2].volume, kInitialVoices[2].pitchLow,
+                              kInitialVoices[2].pitchHigh, kInitialVoices[2].timbre,
+                              kInitialVoices[2].motion, kInitialVoices[2].complexity),
+                  VoiceModel(kInitialVoices[3].name, kInitialVoices[3].enabled,
+                              kInitialVoices[3].volume, kInitialVoices[3].pitchLow,
+                              kInitialVoices[3].pitchHigh, kInitialVoices[3].timbre,
+                              kInitialVoices[3].motion, kInitialVoices[3].complexity)},
+          grainClouds_{GrainCloud(0x1a2b3c4du), GrainCloud(0x5e6f7081u), GrainCloud(0x92a3b4c5u),
+                       GrainCloud(0xd6e7f809u)} {
         addAndMakeVisible(titleLabel);
         titleLabel.setText("Jerrican", juce::dontSendNotification);
         titleLabel.setFont(juce::Font(juce::FontOptions(28.0f)).withStyle(juce::Font::bold));
@@ -25,7 +34,10 @@ public:
         titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
 
         addAndMakeVisible(subtitleLabel);
-        subtitleLabel.setText("A generative instrument built around layered voices, motion, and control surfaces.", juce::dontSendNotification);
+        subtitleLabel.setText(
+            "A generative instrument: each voice composes itself from a field of "
+            "possibilities and never plays the same way twice.",
+            juce::dontSendNotification);
         subtitleLabel.setFont(juce::Font(juce::FontOptions(16.0f)));
         subtitleLabel.setJustificationType(juce::Justification::centred);
         subtitleLabel.setColour(juce::Label::textColourId, juce::Colours::grey);
@@ -59,7 +71,7 @@ public:
 
         updateStatus();
 
-        setSize(1080, 760);
+        setSize(1180, 920);
         setAudioChannels(0, 2);
     }
 
@@ -82,19 +94,20 @@ public:
 
         voiceHeaderLabel.setBounds(40, 120, 200, 28);
 
-        const int rowHeight = 92;
-        const int rowGap = 12;
+        const int rowHeight = 130;
+        const int rowGap = 14;
         const int top = 160;
         const int width = getWidth() - 80;
 
         for (size_t i = 0; i < voiceRows_.size(); ++i) {
-            voiceRows_[i]->setBounds(40, top + static_cast<int>(i) * (rowHeight + rowGap), width, rowHeight);
+            voiceRows_[i]->setBounds(40, top + static_cast<int>(i) * (rowHeight + rowGap), width,
+                                      rowHeight);
         }
     }
 
     void prepareToPlay(int /*samplesPerBlockExpected*/, double sampleRate) override {
-        for (auto& oscillator : oscillators_) {
-            oscillator.setSampleRate(sampleRate);
+        for (auto& cloud : grainClouds_) {
+            cloud.setSampleRate(sampleRate);
         }
     }
 
@@ -106,22 +119,55 @@ public:
                           ? bufferToFill.buffer->getWritePointer(1, bufferToFill.startSample)
                           : nullptr;
 
+        const bool playing = isPlaying_.load(std::memory_order_relaxed);
+
         for (int sample = 0; sample < bufferToFill.numSamples; ++sample) {
-            float mixed = 0.0f;
+            float mixedLeft = 0.0f;
+            float mixedRight = 0.0f;
+
             for (size_t i = 0; i < voices_.size(); ++i) {
-                if (voices_[i].isEnabled()) {
-                    mixed += oscillators_[i].renderSample(voices_[i].getPitch()) * voices_[i].getVolume();
-                }
+                auto& voice = voices_[i];
+                auto& cloud = grainClouds_[i];
+
+                // Already-active grains ring out on their own envelope even
+                // after Stop; only new spawning is gated by the transport,
+                // so stopping fades gracefully instead of clicking.
+                const float complexity = (playing && voice.isEnabled()) ? voice.getComplexity() : 0.0f;
+
+                const auto voiceSample =
+                    cloud.renderSample(voice.getPitchRangeLow(), voice.getPitchRangeHigh(),
+                                        voice.getTimbre(), voice.getMotion(), complexity,
+                                        voice.getVolume());
+                mixedLeft += voiceSample.left;
+                mixedRight += voiceSample.right;
             }
 
-            left[sample] = mixed;
+            constexpr float headroom = 0.5f;
+            left[sample] = mixedLeft * headroom;
             if (right != nullptr) {
-                right[sample] = mixed;
+                right[sample] = mixedRight * headroom;
             }
         }
     }
 
 private:
+    struct InitialVoice {
+        const char* name;
+        bool enabled;
+        float volume;
+        float pitchLow;
+        float pitchHigh;
+        float timbre;
+        float motion;
+        float complexity;
+    };
+
+    static constexpr std::array<InitialVoice, 4> kInitialVoices{
+        {{"Pulse", true, 0.70f, 0.45f, 0.65f, 0.00f, 0.30f, 0.40f},
+         {"Drone", true, 0.60f, 0.05f, 0.25f, 0.33f, 0.15f, 0.20f},
+         {"Spark", true, 0.55f, 0.60f, 0.95f, 1.00f, 0.70f, 0.75f},
+         {"Echo", false, 0.50f, 0.30f, 0.80f, 0.66f, 0.60f, 0.50f}}};
+
     class VoiceRow : public juce::Component, private juce::Button::Listener, private juce::Slider::Listener {
     public:
         VoiceRow(VoiceModel& voice, JerricanEditor* owner) : voiceRef_(voice), owner_(owner) {
@@ -130,52 +176,61 @@ private:
             nameLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
             nameLabel_.setText(voiceRef_.getName(), juce::dontSendNotification);
 
-            addAndMakeVisible(instrumentLabel_);
-            instrumentLabel_.setFont(juce::Font(juce::FontOptions(13.0f)));
-            instrumentLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-            instrumentLabel_.setText(voiceRef_.getInstrument(), juce::dontSendNotification);
-
             addAndMakeVisible(enabledButton_);
             enabledButton_.setButtonText("On");
             enabledButton_.setToggleState(voiceRef_.isEnabled(), juce::dontSendNotification);
             enabledButton_.addListener(this);
 
-            addAndMakeVisible(volumeSlider_);
+            setUpSlider(volumeSlider_, volumeLabel_, "Volume", juce::Slider::LinearHorizontal);
             volumeSlider_.setRange(0.0, 1.0);
             volumeSlider_.setValue(voiceRef_.getVolume());
-            volumeSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
-            volumeSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 48, 20);
-            volumeSlider_.addListener(this);
 
-            addAndMakeVisible(pitchSlider_);
-            pitchSlider_.setRange(0.0, 1.0);
-            pitchSlider_.setValue(voiceRef_.getPitch());
-            pitchSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
-            pitchSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 48, 20);
-            pitchSlider_.addListener(this);
+            setUpSlider(pitchRangeSlider_, pitchRangeLabel_, "Pitch range",
+                        juce::Slider::TwoValueHorizontal);
+            pitchRangeSlider_.setRange(0.0, 1.0);
+            pitchRangeSlider_.setMinAndMaxValues(voiceRef_.getPitchRangeLow(),
+                                                  voiceRef_.getPitchRangeHigh(),
+                                                  juce::dontSendNotification);
 
-            addAndMakeVisible(volumeLabel_);
-            volumeLabel_.setText("Volume", juce::dontSendNotification);
-            volumeLabel_.setFont(juce::Font(juce::FontOptions(12.0f)));
-            volumeLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            setUpSlider(timbreSlider_, timbreLabel_, "Timbre", juce::Slider::LinearHorizontal);
+            timbreSlider_.setRange(0.0, 1.0);
+            timbreSlider_.setValue(voiceRef_.getTimbre());
 
-            addAndMakeVisible(pitchLabel_);
-            pitchLabel_.setText("Pitch", juce::dontSendNotification);
-            pitchLabel_.setFont(juce::Font(juce::FontOptions(12.0f)));
-            pitchLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            setUpSlider(motionSlider_, motionLabel_, "Motion", juce::Slider::LinearHorizontal);
+            motionSlider_.setRange(0.0, 1.0);
+            motionSlider_.setValue(voiceRef_.getMotion());
+
+            setUpSlider(complexitySlider_, complexityLabel_, "Complexity",
+                        juce::Slider::LinearHorizontal);
+            complexitySlider_.setRange(0.0, 1.0);
+            complexitySlider_.setValue(voiceRef_.getComplexity());
         }
 
         void resized() override {
             constexpr int left = 0;
-            constexpr int top = 0;
-            const int controlWidth = std::max(220, getWidth() - 460);
-            nameLabel_.setBounds(left, top, 120, 22);
-            instrumentLabel_.setBounds(left, top + 24, 120, 18);
-            enabledButton_.setBounds(left + 140, top + 8, 60, 24);
-            volumeLabel_.setBounds(left + 220, top, 70, 20);
-            volumeSlider_.setBounds(left + 220, top + 22, std::min(220, controlWidth), 24);
-            pitchLabel_.setBounds(left + 430, top, 70, 20);
-            pitchSlider_.setBounds(left + 430, top + 22, std::min(220, controlWidth), 24);
+            constexpr int row1 = 0;
+            constexpr int row2 = 50;
+            const int controlWidth = std::max(140, (getWidth() - 40) / 4 - 20);
+
+            nameLabel_.setBounds(left, row1, 130, 22);
+            enabledButton_.setBounds(left + 140, row1 + 2, 60, 24);
+            volumeLabel_.setBounds(left + 220, row1, 90, 18);
+            volumeSlider_.setBounds(left + 220, row1 + 20, std::min(220, controlWidth * 2), 24);
+
+            pitchRangeLabel_.setBounds(left, row2, 100, 18);
+            pitchRangeSlider_.setBounds(left, row2 + 20, controlWidth, 24);
+
+            const int col2 = left + controlWidth + 20;
+            timbreLabel_.setBounds(col2, row2, 100, 18);
+            timbreSlider_.setBounds(col2, row2 + 20, controlWidth, 24);
+
+            const int col3 = col2 + controlWidth + 20;
+            motionLabel_.setBounds(col3, row2, 100, 18);
+            motionSlider_.setBounds(col3, row2 + 20, controlWidth, 24);
+
+            const int col4 = col3 + controlWidth + 20;
+            complexityLabel_.setBounds(col4, row2, 100, 18);
+            complexitySlider_.setBounds(col4, row2 + 20, controlWidth, 24);
         }
 
         void buttonClicked(juce::Button* button) override {
@@ -190,8 +245,15 @@ private:
         void sliderValueChanged(juce::Slider* slider) override {
             if (slider == &volumeSlider_) {
                 voiceRef_.setVolume(static_cast<float>(volumeSlider_.getValue()));
-            } else if (slider == &pitchSlider_) {
-                voiceRef_.setPitch(static_cast<float>(pitchSlider_.getValue()));
+            } else if (slider == &pitchRangeSlider_) {
+                voiceRef_.setPitchRange(static_cast<float>(pitchRangeSlider_.getMinValue()),
+                                         static_cast<float>(pitchRangeSlider_.getMaxValue()));
+            } else if (slider == &timbreSlider_) {
+                voiceRef_.setTimbre(static_cast<float>(timbreSlider_.getValue()));
+            } else if (slider == &motionSlider_) {
+                voiceRef_.setMotion(static_cast<float>(motionSlider_.getValue()));
+            } else if (slider == &complexitySlider_) {
+                voiceRef_.setComplexity(static_cast<float>(complexitySlider_.getValue()));
             }
 
             if (owner_ != nullptr) {
@@ -199,52 +261,95 @@ private:
             }
         }
 
+        // Reflects the current model state into the controls, without
+        // triggering listener callbacks (used after Stop/Reset).
+        void refreshFromModel() {
+            enabledButton_.setToggleState(voiceRef_.isEnabled(), juce::dontSendNotification);
+            volumeSlider_.setValue(voiceRef_.getVolume(), juce::dontSendNotification);
+            pitchRangeSlider_.setMinAndMaxValues(voiceRef_.getPitchRangeLow(),
+                                                  voiceRef_.getPitchRangeHigh(),
+                                                  juce::dontSendNotification);
+            timbreSlider_.setValue(voiceRef_.getTimbre(), juce::dontSendNotification);
+            motionSlider_.setValue(voiceRef_.getMotion(), juce::dontSendNotification);
+            complexitySlider_.setValue(voiceRef_.getComplexity(), juce::dontSendNotification);
+        }
+
     private:
+        void setUpSlider(juce::Slider& slider, juce::Label& label, const char* labelText,
+                          juce::Slider::SliderStyle style) {
+            addAndMakeVisible(label);
+            label.setText(labelText, juce::dontSendNotification);
+            label.setFont(juce::Font(juce::FontOptions(12.0f)));
+            label.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+
+            addAndMakeVisible(slider);
+            slider.setSliderStyle(style);
+            slider.setNumDecimalPlacesToDisplay(2);
+            slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 56, 20);
+            slider.addListener(this);
+        }
+
         VoiceModel& voiceRef_;
         JerricanEditor* owner_;
         juce::Label nameLabel_;
-        juce::Label instrumentLabel_;
         juce::Label volumeLabel_;
-        juce::Label pitchLabel_;
+        juce::Label pitchRangeLabel_;
+        juce::Label timbreLabel_;
+        juce::Label motionLabel_;
+        juce::Label complexityLabel_;
         juce::ToggleButton enabledButton_;
         juce::Slider volumeSlider_;
-        juce::Slider pitchSlider_;
+        juce::Slider pitchRangeSlider_;
+        juce::Slider timbreSlider_;
+        juce::Slider motionSlider_;
+        juce::Slider complexitySlider_;
     };
 
     void buttonClicked(juce::Button* button) override {
         if (button == &playButton) {
+            isPlaying_.store(true, std::memory_order_relaxed);
             statusLabel.setText("Transport running", juce::dontSendNotification);
         } else if (button == &stopButton) {
-            for (auto& voice : voices_) {
-                voice.setEnabled(false);
-            }
-            statusLabel.setText("Transport reset", juce::dontSendNotification);
+            isPlaying_.store(false, std::memory_order_relaxed);
+            resetVoicesToInitialState();
+            statusLabel.setText("Transport stopped — voices reset", juce::dontSendNotification);
         } else if (button == &randomizeButton) {
-            for (auto& voice : voices_) {
-                voice.setVolume(0.35f + static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX) * 0.55f);
-                voice.setPitch(0.2f + static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX) * 0.8f);
+            for (auto& cloud : grainClouds_) {
+                cloud.rerollDrift();
             }
         }
 
         updateStatusSummary();
     }
 
-    void updateStatus() {
-        updateStatusSummary();
+    void resetVoicesToInitialState() {
+        for (size_t i = 0; i < voices_.size(); ++i) {
+            const auto& initial = kInitialVoices[i];
+            voices_[i].setEnabled(initial.enabled);
+            voices_[i].setVolume(initial.volume);
+            voices_[i].setPitchRange(initial.pitchLow, initial.pitchHigh);
+            voices_[i].setTimbre(initial.timbre);
+            voices_[i].setMotion(initial.motion);
+            voices_[i].setComplexity(initial.complexity);
+            voiceRows_[i]->refreshFromModel();
+        }
     }
+
+    void updateStatus() { updateStatusSummary(); }
 
     void updateStatusSummary() {
         int activeVoices = 0;
-        float totalVolume = 0.0f;
         for (const auto& voice : voices_) {
             if (voice.isEnabled()) {
                 ++activeVoices;
-                totalVolume += voice.getVolume();
             }
         }
 
-        const float averageVolume = activeVoices > 0 ? totalVolume / static_cast<float>(activeVoices) : 0.0f;
-        statusLabel.setText("Transport ready — " + juce::String(activeVoices) + " active voices / avg volume " + juce::String(averageVolume, 2), juce::dontSendNotification);
+        const juce::String transportState =
+            isPlaying_.load(std::memory_order_relaxed) ? "playing" : "stopped";
+        statusLabel.setText("Transport " + transportState + " — " + juce::String(activeVoices) +
+                                 " active voices",
+                             juce::dontSendNotification);
     }
 
     juce::Label titleLabel;
@@ -254,8 +359,9 @@ private:
     juce::TextButton playButton;
     juce::TextButton stopButton;
     juce::TextButton randomizeButton;
+    std::atomic<bool> isPlaying_{false};
     std::array<VoiceModel, 4> voices_;
-    std::array<VoiceOscillator, 4> oscillators_;
+    std::array<GrainCloud, 4> grainClouds_;
     std::array<std::unique_ptr<VoiceRow>, 4> voiceRows_;
 };
 
@@ -264,7 +370,7 @@ public:
     JerricanMainWindow() : juce::DocumentWindow("Jerrican", juce::Colours::black, juce::DocumentWindow::allButtons) {
         setContentOwned(new JerricanEditor(), true);
         setResizable(true, true);
-        centreWithSize(900, 620);
+        centreWithSize(1180, 920);
         setVisible(true);
     }
 

@@ -5,8 +5,8 @@
 
 namespace {
 
-void checkStaysInRange(const std::string& instrument) {
-    VoiceOscillator oscillator(instrument);
+void checkStaysInRange(VoiceOscillator::Waveform waveform) {
+    VoiceOscillator oscillator(waveform);
     oscillator.setSampleRate(44100.0);
 
     for (int i = 0; i < 44100; ++i) {
@@ -18,13 +18,13 @@ void checkStaysInRange(const std::string& instrument) {
 }  // namespace
 
 int main() {
-    checkStaysInRange("Sine");
-    checkStaysInRange("Saw");
-    checkStaysInRange("Noise");
-    checkStaysInRange("FM");
+    checkStaysInRange(VoiceOscillator::Waveform::Sine);
+    checkStaysInRange(VoiceOscillator::Waveform::Saw);
+    checkStaysInRange(VoiceOscillator::Waveform::Noise);
+    checkStaysInRange(VoiceOscillator::Waveform::Fm);
 
-    VoiceOscillator low("Sine");
-    VoiceOscillator high("Sine");
+    VoiceOscillator low(VoiceOscillator::Waveform::Sine);
+    VoiceOscillator high(VoiceOscillator::Waveform::Sine);
     low.setSampleRate(44100.0);
     high.setSampleRate(44100.0);
 
@@ -35,6 +35,13 @@ int main() {
         }
     }
     assert(differs);
+
+    VoiceOscillator reusable(VoiceOscillator::Waveform::Saw);
+    reusable.setSampleRate(44100.0);
+    reusable.renderSample(0.5f);
+    reusable.setWaveform(VoiceOscillator::Waveform::Noise);
+    reusable.reset();
+    assert(reusable.renderSample(0.5f) >= -1.0f && reusable.renderSample(0.5f) <= 1.0f);
 
     std::cout << "VoiceOscillator tests passed" << std::endl;
     return 0;

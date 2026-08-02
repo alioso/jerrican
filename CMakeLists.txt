@@ -44,6 +44,15 @@ target_include_directories(VoiceOscillatorTests
         ${CMAKE_CURRENT_SOURCE_DIR}/Sources/JerricanApp
 )
 
+add_executable(GrainCloudTests
+    Tests/GrainCloudTest.cpp
+)
+
+target_include_directories(GrainCloudTests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Sources/JerricanApp
+)
+
 target_compile_definitions(JerricanApp
     PRIVATE
         JUCE_WEB_BROWSER=0
