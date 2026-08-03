@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cmath>
 #include <iostream>
 
 #include "EvolutionEngine.h"
@@ -8,16 +9,20 @@ namespace {
 
 constexpr double kSampleRate = 44100.0;
 
+VoiceModel makeTestVoice() {
+    return VoiceModel("Test", true, 0.8f, 0.4f, 0.6f, 0.5f, 0.3f, 0.4f, 0.6f);
+}
+
 }  // namespace
 
 int main() {
-    // At evolution == 0, update() is provably inert: nothing about the
-    // voice changes no matter how many times it's called.
+    // At amount == 0, update() is provably inert: nothing about the voice
+    // changes no matter how many times it's called.
     {
-        VoiceModel voice("Test", true, 0.8f, 0.4f, 0.6f, 0.5f, 0.3f, 0.4f, 0.6f);
+        VoiceModel voice = makeTestVoice();
         EvolutionEngine engine(1u);
         engine.setSampleRate(kSampleRate);
-        engine.resetTo(0.5f, 0.2f, 0.5f, 0.3f, 0.4f, 0.6f);
+        engine.resetTo(0.5f, 0.2f, 0.7f, 0.5f, 0.3f, 0.4f, 0.6f);
 
         for (int i = 0; i < static_cast<int>(kSampleRate) * 2; ++i) {
             engine.update(voice, 0.0f, 1.0f);
@@ -25,19 +30,22 @@ int main() {
 
         assert(voice.getPitchRangeLow() == 0.4f);
         assert(voice.getPitchRangeHigh() == 0.6f);
+        assert(voice.getVolume() == 0.8f);
         assert(voice.getTimbre() == 0.5f);
         assert(voice.getMotion() == 0.3f);
         assert(voice.getComplexity() == 0.4f);
         assert(voice.getDissonance() == 0.6f);
     }
 
-    // At evolution == 1, over enough samples the macros must actually move.
+    // At amount == speed == 1, over enough samples every macro (including
+    // Volume, now tracked too) must actually move.
     {
-        VoiceModel voice("Test", true, 0.8f, 0.4f, 0.6f, 0.5f, 0.3f, 0.4f, 0.6f);
+        VoiceModel voice = makeTestVoice();
         EvolutionEngine engine(2u);
         engine.setSampleRate(kSampleRate);
-        engine.resetTo(0.5f, 0.2f, 0.5f, 0.3f, 0.4f, 0.6f);
+        engine.resetTo(0.5f, 0.2f, 0.7f, 0.5f, 0.3f, 0.4f, 0.6f);
 
+        bool volumeChanged = false;
         bool timbreChanged = false;
         bool motionChanged = false;
         bool complexityChanged = false;
@@ -46,6 +54,7 @@ int main() {
 
         for (int i = 0; i < static_cast<int>(kSampleRate) * 5; ++i) {
             engine.update(voice, 1.0f, 1.0f);
+            if (voice.getVolume() != 0.8f) volumeChanged = true;
             if (voice.getTimbre() != 0.5f) timbreChanged = true;
             if (voice.getMotion() != 0.3f) motionChanged = true;
             if (voice.getComplexity() != 0.4f) complexityChanged = true;
@@ -55,6 +64,7 @@ int main() {
             }
         }
 
+        assert(volumeChanged);
         assert(timbreChanged);
         assert(motionChanged);
         assert(complexityChanged);
@@ -64,10 +74,10 @@ int main() {
 
     // Pitch range width stays constant — only the center should move.
     {
-        VoiceModel voice("Test", true, 0.8f, 0.4f, 0.6f, 0.5f, 0.3f, 0.4f, 0.6f);
+        VoiceModel voice = makeTestVoice();
         EvolutionEngine engine(3u);
         engine.setSampleRate(kSampleRate);
-        engine.resetTo(0.5f, 0.2f, 0.5f, 0.3f, 0.4f, 0.6f);
+        engine.resetTo(0.5f, 0.2f, 0.7f, 0.5f, 0.3f, 0.4f, 0.6f);
 
         for (int i = 0; i < static_cast<int>(kSampleRate) * 5; ++i) {
             engine.update(voice, 1.0f, 1.0f);
@@ -76,26 +86,77 @@ int main() {
         }
     }
 
-    // Amount and Speed are decoupled: amount > 0 with speed == 0 still
-    // picks new internal targets (retargeting depends on amount only),
-    // but the voice's visible values never move (smoothing depends on
-    // speed only, and zero smoothing means zero movement).
+    // Speed is a huge, exponential range: at the same Amount and the same
+    // random sequence (identical seeds), speed=1 must move a parameter
+    // dramatically more than speed=0 over the same duration — and speed=0
+    // (the slowest setting) should barely move it at all.
     {
-        VoiceModel voice("Test", true, 0.8f, 0.4f, 0.6f, 0.5f, 0.3f, 0.4f, 0.6f);
-        EvolutionEngine engine(4u);
-        engine.setSampleRate(kSampleRate);
-        engine.resetTo(0.5f, 0.2f, 0.5f, 0.3f, 0.4f, 0.6f);
+        VoiceModel voiceSlow = makeTestVoice();
+        EvolutionEngine engineSlow(4u);
+        engineSlow.setSampleRate(kSampleRate);
+        engineSlow.resetTo(0.5f, 0.2f, 0.7f, 0.5f, 0.3f, 0.4f, 0.6f);
+
+        VoiceModel voiceFast = makeTestVoice();
+        EvolutionEngine engineFast(4u);
+        engineFast.setSampleRate(kSampleRate);
+        engineFast.resetTo(0.5f, 0.2f, 0.7f, 0.5f, 0.3f, 0.4f, 0.6f);
 
         for (int i = 0; i < static_cast<int>(kSampleRate) * 5; ++i) {
-            engine.update(voice, 1.0f, 0.0f);
+            engineSlow.update(voiceSlow, 1.0f, 0.0f);
+            engineFast.update(voiceFast, 1.0f, 1.0f);
         }
 
-        assert(voice.getPitchRangeLow() == 0.4f);
-        assert(voice.getPitchRangeHigh() == 0.6f);
+        const float slowMovement = std::abs(voiceSlow.getTimbre() - 0.5f);
+        const float fastMovement = std::abs(voiceFast.getTimbre() - 0.5f);
+        assert(slowMovement < 0.05f);
+        assert(fastMovement > slowMovement);
+    }
+
+    // Per-parameter opt-out: disabling Timbre stops it from ever moving,
+    // even at amount=speed=1, while every other (still-enabled) macro
+    // keeps evolving normally.
+    {
+        VoiceModel voice = makeTestVoice();
+        EvolutionEngine engine(5u);
+        engine.setSampleRate(kSampleRate);
+        engine.resetTo(0.5f, 0.2f, 0.7f, 0.5f, 0.3f, 0.4f, 0.6f);
+        engine.setTimbreEnabled(false);
+
+        bool motionChanged = false;
+
+        for (int i = 0; i < static_cast<int>(kSampleRate) * 5; ++i) {
+            engine.update(voice, 1.0f, 1.0f);
+            if (voice.getMotion() != 0.3f) motionChanged = true;
+        }
+
         assert(voice.getTimbre() == 0.5f);
-        assert(voice.getMotion() == 0.3f);
-        assert(voice.getComplexity() == 0.4f);
-        assert(voice.getDissonance() == 0.6f);
+        assert(motionChanged);
+    }
+
+    // Re-enabling a disabled parameter resyncs it to the live value first
+    // (resyncTimbre), so it doesn't jump to a stale target picked while it
+    // was disabled.
+    {
+        VoiceModel voice = makeTestVoice();
+        EvolutionEngine engine(6u);
+        engine.setSampleRate(kSampleRate);
+        engine.resetTo(0.5f, 0.2f, 0.7f, 0.5f, 0.3f, 0.4f, 0.6f);
+        engine.setTimbreEnabled(false);
+
+        for (int i = 0; i < static_cast<int>(kSampleRate) * 5; ++i) {
+            engine.update(voice, 1.0f, 1.0f);
+        }
+        assert(voice.getTimbre() == 0.5f);
+
+        voice.setTimbre(0.9f);
+        engine.resyncTimbre(0.9f);
+        engine.setTimbreEnabled(true);
+
+        // Immediately after resync + re-enable, one more update() call
+        // shouldn't have jumped it away from 0.9 by more than a tiny
+        // smoothing step.
+        engine.update(voice, 1.0f, 1.0f);
+        assert(std::abs(voice.getTimbre() - 0.9f) < 0.05f);
     }
 
     std::cout << "EvolutionEngine tests passed" << std::endl;

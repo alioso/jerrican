@@ -16,4 +16,10 @@ inline const juce::Colour textPrimary{0xffffffffu};
 inline const juce::Colour textSecondary{0xffb7b3adu};
 inline const juce::Colour trackOff{0xff35353bu};
 
+// Distinct cool accent for anything Evolution-related (the transport's
+// Amount/Speed knobs, each voice's per-parameter Evolution toggles) so
+// that mechanic reads as a clearly separate, related group from the warm
+// amber used for direct/manual controls everywhere else.
+inline const juce::Colour evolutionAccent{0xff5fd8c9u};
+
 }  // namespace JerricanTheme

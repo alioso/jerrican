@@ -26,7 +26,8 @@ public:
     void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
                           float sliderPosProportional, float rotaryStartAngle,
                           float rotaryEndAngle, juce::Slider& slider) override {
-        juce::ignoreUnused(slider);
+        const juce::Colour arcColour =
+            slider.getName() == "evolutionKnob" ? JerricanTheme::evolutionAccent : JerricanTheme::accent;
 
         const auto bounds = juce::Rectangle<float>(static_cast<float>(x), static_cast<float>(y),
                                                      static_cast<float>(width),
@@ -52,7 +53,7 @@ public:
         juce::Path valueArc;
         valueArc.addCentredArc(centre.x, centre.y, trackRadius, trackRadius, 0.0f,
                                 rotaryStartAngle, angle, true);
-        g.setColour(JerricanTheme::accent);
+        g.setColour(arcColour);
         g.strokePath(valueArc,
                      juce::PathStrokeType(trackThickness, juce::PathStrokeType::curved,
                                           juce::PathStrokeType::rounded));
@@ -75,7 +76,7 @@ public:
         const float pointerThickness = 3.0f;
         pointer.addRoundedRectangle(-pointerThickness * 0.5f, -pointerLength, pointerThickness,
                                      pointerLength * 0.55f, pointerThickness * 0.5f);
-        g.setColour(JerricanTheme::accentDeep);
+        g.setColour(arcColour.darker(0.3f));
         g.fillPath(pointer, juce::AffineTransform::rotation(angle).translated(centre.x, centre.y));
     }
 
@@ -119,8 +120,11 @@ public:
         const float diameter = std::min(bounds.getWidth(), bounds.getHeight());
         const auto ledBounds = juce::Rectangle<float>(diameter, diameter).withCentre(bounds.getCentre());
 
+        const juce::Colour onColour =
+            button.getName() == "evolutionToggle" ? JerricanTheme::evolutionAccent : JerricanTheme::accent;
+
         const bool isOn = button.getToggleState();
-        g.setColour(isOn ? JerricanTheme::accent
+        g.setColour(isOn ? onColour
                           : (shouldDrawButtonAsHighlighted ? JerricanTheme::trackOff.brighter(0.2f)
                                                             : JerricanTheme::trackOff));
         g.fillEllipse(ledBounds);

@@ -28,40 +28,47 @@ public:
         editor_.setColour(juce::TextEditor::textColourId, JerricanTheme::textPrimary);
         editor_.setColour(juce::TextEditor::outlineColourId, JerricanTheme::panelBorder);
         editor_.setColour(juce::TextEditor::focusedOutlineColourId, JerricanTheme::panelBorder);
-        editor_.setFont(juce::Font(juce::FontOptions(14.0f)));
-        editor_.setText(
+        editor_.setFont(juce::Font(juce::FontOptions(12.5f)));
+
+        const juce::String bodyText =
             "Jerrican\n"
-            "A generative instrument by Alban Bailly.\n\n"
-            "Jerrican composes itself continuously from a field of possibilities "
-            "you shape, rather than playing a fixed, repeating sequence: each "
-            "voice is a cloud of short synthesized grains whose pitch, timbre, "
-            "and timing are drawn fresh, moment to moment, from the ranges you "
-            "set.\n\n"
+            "A self-composing granular instrument by Alban Bailly.\n\n"
+            "Composes itself continuously from a field of possibilities you "
+            "shape, rather than a fixed sequence: each voice is a cloud of "
+            "short synthesized grains whose pitch, timbre, and timing are "
+            "drawn fresh from the ranges you set.\n\n"
             "TRANSPORT\n"
             "Play - starts new grains spawning.\n"
-            "Stop / Reset - stops new grains (existing ones ring out gracefully) "
-            "and resets every voice to its starting state.\n"
-            "Randomize - rerolls every voice's levers to new values, whether "
-            "playing or stopped.\n"
-            "Evolution Amount - how often each voice's levers wander on their "
-            "own, unprompted; 0 leaves them exactly where you set them.\n"
-            "Evolution Speed - how quickly a voice glides toward a newly chosen "
-            "value once Amount decides to move it.\n\n"
+            "Stop - halts new grains (existing ones ring out); every knob "
+            "stays put, so Play picks up right where you left off.\n"
+            "Reset - snaps every voice back to its starting values.\n"
+            "Randomize - rerolls every voice's levers, whether playing or "
+            "stopped.\n"
+            "Evolution Amount - how often a voice's levers wander on their "
+            "own; 0 leaves them alone.\n"
+            "Evolution Speed - how fast a change glides in once Amount picks "
+            "one - near-instant to almost imperceptibly slow.\n\n"
             "PER-VOICE CONTROLS\n"
-            "Enabled - mutes/unmutes the voice.\n"
-            "Volume - the voice's overall level.\n"
-            "Pitch Range - the band new grains draw their pitch from.\n"
-            "Timbre - blends each grain's character between smooth, buzzy, "
-            "metallic, and textured.\n"
-            "Motion - how far the voice's sampling point wanders within its "
-            "Pitch Range over time.\n"
-            "Complexity - how dense/busy the voice's grain cloud is.\n"
-            "Dissonance - 0 quantizes the voice to a shared consonant scale "
-            "(so voices harmonize together); 1 is fully free/chromatic.\n\n"
+            "Enabled - mutes/unmutes the voice.  Volume - overall level.\n"
+            "Pitch Range - band grains draw their pitch from.\n"
+            "Timbre - blends grain character, smooth to metallic/textured.\n"
+            "Motion - how far the sampling point wanders within Pitch Range.\n"
+            "Complexity - how dense the grain cloud is.\n"
+            "Dissonance - 0 quantizes to a shared consonant scale so voices "
+            "harmonize; 1 is fully free/chromatic.\n\n"
+            "Each control has its own small Evolution switch (on by default, "
+            "teal) - turn one off to keep it under manual control while the "
+            "rest keep drifting.\n\n"
+            "REVERB\n"
+            "Room - a global send amount/space size for the whole mix. "
+            "Decay - how long the tail rings out. Both are 0 by default "
+            "(no reverb, output unchanged) and never evolve on their own.\n\n"
             "OUTPUT\n"
-            "Chooses which audio device the instrument plays through.\n\n"
-            "\xc2\xa9 2026 Alban Bailly. All rights reserved.",
-            false);
+            "Chooses which audio device the instrument plays through.\n\n" +
+            juce::String(juce::CharPointer_UTF8("\xc2\xa9")) +
+            " 2026 Alban Bailly. All rights reserved.";
+
+        editor_.setText(bodyText, false);
         addAndMakeVisible(editor_);
     }
 
@@ -111,8 +118,8 @@ public:
             const auto& initial = kInitialVoices[i];
             const float center = (initial.pitchLow + initial.pitchHigh) * 0.5f;
             const float width = initial.pitchHigh - initial.pitchLow;
-            evolutionEngines_[i].resetTo(center, width, initial.timbre, initial.motion,
-                                          initial.complexity, initial.dissonance);
+            evolutionEngines_[i].resetTo(center, width, initial.volume, initial.timbre,
+                                          initial.motion, initial.complexity, initial.dissonance);
         }
 
         setLookAndFeel(&lookAndFeel_);
@@ -128,7 +135,8 @@ public:
         titleLabel.setColour(juce::Label::textColourId, JerricanTheme::textPrimary);
 
         addAndMakeVisible(subtitleLabel);
-        subtitleLabel.setText("A generative instrument by Alban Bailly", juce::dontSendNotification);
+        subtitleLabel.setText("A self-composing granular instrument by Alban Bailly",
+                              juce::dontSendNotification);
         subtitleLabel.setFont(juce::Font(juce::FontOptions(16.0f)));
         subtitleLabel.setJustificationType(juce::Justification::centredLeft);
         subtitleLabel.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
@@ -149,8 +157,12 @@ public:
         playButton.addListener(this);
 
         addAndMakeVisible(stopButton);
-        stopButton.setButtonText("Stop / Reset");
+        stopButton.setButtonText("Stop");
         stopButton.addListener(this);
+
+        addAndMakeVisible(resetButton);
+        resetButton.setButtonText("Reset");
+        resetButton.addListener(this);
 
         addAndMakeVisible(randomizeButton);
         randomizeButton.setButtonText("Randomize");
@@ -168,13 +180,28 @@ public:
         setUpTransportKnob(evolutionSpeedSlider, evolutionSpeedLabel, "Speed");
         evolutionSpeedSlider.setValue(0.5);
 
+        addAndMakeVisible(reverbTitleLabel);
+        reverbTitleLabel.setText("Reverb", juce::dontSendNotification);
+        reverbTitleLabel.setFont(juce::Font(juce::FontOptions(13.0f)).withStyle(juce::Font::bold));
+        reverbTitleLabel.setColour(juce::Label::textColourId, JerricanTheme::textPrimary);
+        reverbTitleLabel.setJustificationType(juce::Justification::centred);
+
+        // Deliberately plain amber knobs (no "evolutionKnob" name tag) —
+        // Reverb sits outside the Evolution mechanic entirely, it never
+        // drifts on its own.
+        setUpTransportKnob(roomSlider, roomLabel, "Room", false);
+        roomSlider.setValue(0.0);
+
+        setUpTransportKnob(decaySlider, decayLabel, "Decay", false);
+        decaySlider.setValue(0.0);
+
         addAndMakeVisible(statusLabel);
         statusLabel.setText("Transport idle", juce::dontSendNotification);
         statusLabel.setFont(juce::Font(juce::FontOptions(14.0f)));
         statusLabel.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
 
         for (size_t i = 0; i < voices_.size(); ++i) {
-            voiceRows_[i] = std::make_unique<VoiceRow>(voices_[i], this);
+            voiceRows_[i] = std::make_unique<VoiceRow>(voices_[i], evolutionEngines_[i], this);
             addAndMakeVisible(*voiceRows_[i]);
         }
 
@@ -195,22 +222,34 @@ public:
     void paint(juce::Graphics& g) override { g.fillAll(JerricanTheme::background); }
 
     void resized() override {
-        logoImage_.setBounds(40, 30, 36, 36);
-        titleLabel.setBounds(84, 30, 300, 36);
-        subtitleLabel.setBounds(84, 66, getWidth() - 340, 24);
+        logoImage_.setBounds(40, 16, 34, 34);
+        titleLabel.setBounds(82, 16, 300, 34);
+        subtitleLabel.setBounds(82, 48, getWidth() - 340, 22);
 
-        helpButton.setBounds(getWidth() - 292, 30, 24, 24);
-        outputLabel.setBounds(getWidth() - 260, 8, 220, 14);
-        outputDeviceBox.setBounds(getWidth() - 260, 24, 220, 24);
+        outputLabel.setBounds(getWidth() - 260, 16, 220, 14);
+        helpButton.setBounds(getWidth() - 292, 32, 24, 24);
+        outputDeviceBox.setBounds(getWidth() - 260, 32, 220, 24);
 
         // Shared bottom baseline: every transport control's bottom edge
         // sits on this line, even though the Evolution knobs are taller
         // (label + circle + value box) than the transport buttons.
         const int bottomY = getHeight() - 20;
 
-        playButton.setBounds(40, bottomY - 36, 120, 36);
-        stopButton.setBounds(180, bottomY - 36, 140, 36);
-        randomizeButton.setBounds(340, bottomY - 36, 140, 36);
+        // 2x2 transport grid: Play/Stop on top, Reset/Randomize below,
+        // bottom row's bottom edge on the shared baseline.
+        constexpr int buttonColumnWidth = 150;
+        constexpr int buttonColumnGap = 10;
+        constexpr int buttonRowHeight = 36;
+        constexpr int buttonRowGap = 8;
+        const int buttonCol1X = 40;
+        const int buttonCol2X = buttonCol1X + buttonColumnWidth + buttonColumnGap;
+        const int buttonRow2Y = bottomY - buttonRowHeight;
+        const int buttonRow1Y = buttonRow2Y - buttonRowGap - buttonRowHeight;
+
+        playButton.setBounds(buttonCol1X, buttonRow1Y, buttonColumnWidth, buttonRowHeight);
+        stopButton.setBounds(buttonCol2X, buttonRow1Y, buttonColumnWidth, buttonRowHeight);
+        resetButton.setBounds(buttonCol1X, buttonRow2Y, buttonColumnWidth, buttonRowHeight);
+        randomizeButton.setBounds(buttonCol2X, buttonRow2Y, buttonColumnWidth, buttonRowHeight);
 
         // Evolution block: a title above two knobs (Amount, Speed), whole
         // block's bottom (the knobs' value boxes) sitting on bottomY.
@@ -242,7 +281,27 @@ public:
         evolutionSpeedSlider.setBounds(speedColumnX + (knobColumnWidth - knobSize) / 2, knobBoxTop,
                                        knobSize, knobSize + knobTextBoxHeight);
 
-        const int statusX = evolutionBlockX + evolutionBlockWidth + 30;
+        // Reverb block: same shape as Evolution's (title over two knobs),
+        // same bottom baseline, placed immediately to its right. Plain
+        // amber (not teal) since Reverb never drifts on its own.
+        const int reverbBlockX = evolutionBlockX + evolutionBlockWidth + 30;
+        const int reverbBlockWidth = knobColumnWidth * 2;
+
+        reverbTitleLabel.setBounds(reverbBlockX, evolutionTitleTop, reverbBlockWidth,
+                                   evolutionTitleHeight);
+
+        const int roomColumnX = reverbBlockX;
+        const int decayColumnX = reverbBlockX + knobColumnWidth;
+
+        roomLabel.setBounds(roomColumnX, knobLabelTop, knobColumnWidth, knobLabelHeight);
+        roomSlider.setBounds(roomColumnX + (knobColumnWidth - knobSize) / 2, knobBoxTop, knobSize,
+                             knobSize + knobTextBoxHeight);
+
+        decayLabel.setBounds(decayColumnX, knobLabelTop, knobColumnWidth, knobLabelHeight);
+        decaySlider.setBounds(decayColumnX + (knobColumnWidth - knobSize) / 2, knobBoxTop, knobSize,
+                              knobSize + knobTextBoxHeight);
+
+        const int statusX = reverbBlockX + reverbBlockWidth + 30;
         statusLabel.setBounds(statusX, bottomY - 24, getWidth() - statusX - 40, 24);
 
         // 2x2 grid of voice cards, filling the space between the header and
@@ -250,7 +309,7 @@ public:
         constexpr int columns = 2;
         constexpr int rows = 2;
         const int gridLeft = 40;
-        const int gridTop = 104;
+        const int gridTop = 86;
         const int gridRight = getWidth() - 40;
         const int gridBottom = bottomY - 130;
         constexpr int gap = 16;
@@ -266,7 +325,8 @@ public:
         }
     }
 
-    void setUpTransportKnob(juce::Slider& slider, juce::Label& label, const char* labelText) {
+    void setUpTransportKnob(juce::Slider& slider, juce::Label& label, const char* labelText,
+                            bool evolutionThemed = true) {
         addAndMakeVisible(label);
         label.setText(labelText, juce::dontSendNotification);
         label.setFont(juce::Font(juce::FontOptions(12.0f)));
@@ -274,6 +334,9 @@ public:
         label.setJustificationType(juce::Justification::centred);
 
         addAndMakeVisible(slider);
+        if (evolutionThemed) {
+            slider.setName("evolutionKnob");
+        }
         slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         slider.setRange(0.0, 1.0);
         slider.setNumDecimalPlacesToDisplay(2);
@@ -283,7 +346,7 @@ public:
 
     void showHelpPopup() {
         auto content = std::make_unique<HelpContent>();
-        content->setSize(420, 480);
+        content->setSize(480, 620);
         juce::CallOutBox::launchAsynchronously(std::move(content), helpButton.getScreenBounds(),
                                                 nullptr);
     }
@@ -323,6 +386,7 @@ public:
         for (auto& engine : evolutionEngines_) {
             engine.setSampleRate(sampleRate);
         }
+        reverb_.setSampleRate(sampleRate);
     }
 
     void releaseResources() override {}
@@ -369,6 +433,25 @@ public:
             if (right != nullptr) {
                 right[sample] = mixedRight * headroom;
             }
+        }
+
+        // Reverb sits outside the Evolution mechanic entirely — it's a
+        // fixed global send, never drifted. Room=0/Decay=0 (the defaults)
+        // give wetLevel=0 and unity dry gain, so this is a no-op and the
+        // output is identical to before Reverb existed.
+        if (right != nullptr) {
+            const float room = reverbRoom_.load(std::memory_order_relaxed);
+            const float decay = reverbDecay_.load(std::memory_order_relaxed);
+
+            juce::Reverb::Parameters reverbParams;
+            reverbParams.wetLevel = room * 0.5f;
+            reverbParams.dryLevel = 0.5f;  // dryGain = dryLevel * 2.0 = unity
+            reverbParams.roomSize = juce::jlimit(0.0f, 1.0f, 0.25f + decay * 0.65f + room * 0.1f);
+            reverbParams.damping = juce::jlimit(0.0f, 1.0f, 1.0f - decay * 0.75f);
+            reverbParams.width = 1.0f;
+            reverbParams.freezeMode = 0.0f;
+            reverb_.setParameters(reverbParams);
+            reverb_.processStereo(left, right, bufferToFill.numSamples);
         }
     }
 
@@ -417,12 +500,15 @@ private:
           Grain::Character::Ambient}}};
 
     // A self-contained voice "card": name + LED enable indicator, a
-    // full-width Pitch Range band, and a row of five knobs. Visuals come
+    // full-width Pitch Range band, a row of five knobs, and — below a
+    // divider — a themed (teal) row of six switches opting each of those
+    // six controls in/out of autonomous Evolution drift. Visuals come
     // entirely from JerricanLookAndFeel — this class only owns layout and
-    // VoiceModel wiring, unchanged from before the branding pass.
+    // VoiceModel/EvolutionEngine wiring.
     class VoiceRow : public juce::Component, private juce::Button::Listener, private juce::Slider::Listener {
     public:
-        VoiceRow(VoiceModel& voice, JerricanEditor* owner) : voiceRef_(voice), owner_(owner) {
+        VoiceRow(VoiceModel& voice, EvolutionEngine& evolutionEngine, JerricanEditor* owner)
+            : voiceRef_(voice), evolutionEngineRef_(evolutionEngine), owner_(owner) {
             addAndMakeVisible(nameLabel_);
             nameLabel_.setFont(juce::Font(juce::FontOptions(18.0f)).withStyle(juce::Font::bold));
             nameLabel_.setColour(juce::Label::textColourId, JerricanTheme::textPrimary);
@@ -452,6 +538,17 @@ private:
 
             setUpKnob(dissonanceSlider_, dissonanceLabel_, "Dissonance");
             dissonanceSlider_.setValue(voiceRef_.getDissonance());
+
+            addAndMakeVisible(evolutionSectionLabel_);
+            evolutionSectionLabel_.setText("Evolution", juce::dontSendNotification);
+            evolutionSectionLabel_.setFont(juce::Font(juce::FontOptions(11.0f)).withStyle(juce::Font::bold));
+            evolutionSectionLabel_.setColour(juce::Label::textColourId, JerricanTheme::evolutionAccent);
+            evolutionSectionLabel_.setJustificationType(juce::Justification::centredLeft);
+
+            for (size_t i = 0; i < kEvolutionToggleCount; ++i) {
+                setUpEvolutionCaption(*evolutionCaptionLabels()[i], kEvolutionCaptions[i]);
+                setUpEvolutionToggle(*evolutionToggles()[i]);
+            }
         }
 
         void paint(juce::Graphics& g) override {
@@ -460,6 +557,9 @@ private:
             g.fillRoundedRectangle(bounds, 10.0f);
             g.setColour(JerricanTheme::panelBorder);
             g.drawRoundedRectangle(bounds.reduced(0.5f), 10.0f, 1.0f);
+
+            g.setColour(JerricanTheme::panelBorder);
+            g.drawHorizontalLine(dividerY_, 14.0f, static_cast<float>(getWidth() - 14));
         }
 
         void resized() override {
@@ -492,6 +592,26 @@ private:
                 knobs[i]->setBounds(knobX, knobRowY + knobLabelHeight + 2, knobSize,
                                      knobSize + knobTextBoxHeight);
             }
+
+            const int knobRowBottom = knobRowY + knobLabelHeight + 2 + knobSize + knobTextBoxHeight;
+            dividerY_ = knobRowBottom + 10;
+
+            const int evolutionLabelY = knobRowBottom + 16;
+            evolutionSectionLabel_.setBounds(padding, evolutionLabelY, 100, 14);
+
+            const int toggleRowY = evolutionLabelY + 18;
+            const int toggleColumnWidth = contentWidth / kEvolutionToggleCount;
+            constexpr int toggleCaptionHeight = 12;
+            constexpr int toggleSize = 16;
+
+            for (size_t i = 0; i < kEvolutionToggleCount; ++i) {
+                const int columnX = padding + static_cast<int>(i) * toggleColumnWidth;
+                evolutionCaptionLabels()[i]->setBounds(columnX, toggleRowY, toggleColumnWidth,
+                                                       toggleCaptionHeight);
+                const int toggleX = columnX + (toggleColumnWidth - toggleSize) / 2;
+                evolutionToggles()[i]->setBounds(toggleX, toggleRowY + toggleCaptionHeight + 2,
+                                                 toggleSize, toggleSize);
+            }
         }
 
         void buttonClicked(juce::Button* button) override {
@@ -500,23 +620,74 @@ private:
                 if (owner_ != nullptr) {
                     owner_->updateStatus();
                 }
+                return;
+            }
+
+            if (button == &volumeEvoToggle_) {
+                const bool on = volumeEvoToggle_.getToggleState();
+                evolutionEngineRef_.setVolumeEnabled(on);
+                if (on) evolutionEngineRef_.resyncVolume(voiceRef_.getVolume());
+            } else if (button == &pitchRangeEvoToggle_) {
+                const bool on = pitchRangeEvoToggle_.getToggleState();
+                evolutionEngineRef_.setPitchRangeEnabled(on);
+                if (on) {
+                    evolutionEngineRef_.resyncPitchRange(voiceRef_.getPitchRangeLow(),
+                                                          voiceRef_.getPitchRangeHigh());
+                }
+            } else if (button == &timbreEvoToggle_) {
+                const bool on = timbreEvoToggle_.getToggleState();
+                evolutionEngineRef_.setTimbreEnabled(on);
+                if (on) evolutionEngineRef_.resyncTimbre(voiceRef_.getTimbre());
+            } else if (button == &motionEvoToggle_) {
+                const bool on = motionEvoToggle_.getToggleState();
+                evolutionEngineRef_.setMotionEnabled(on);
+                if (on) evolutionEngineRef_.resyncMotion(voiceRef_.getMotion());
+            } else if (button == &complexityEvoToggle_) {
+                const bool on = complexityEvoToggle_.getToggleState();
+                evolutionEngineRef_.setComplexityEnabled(on);
+                if (on) evolutionEngineRef_.resyncComplexity(voiceRef_.getComplexity());
+            } else if (button == &dissonanceEvoToggle_) {
+                const bool on = dissonanceEvoToggle_.getToggleState();
+                evolutionEngineRef_.setDissonanceEnabled(on);
+                if (on) evolutionEngineRef_.resyncDissonance(voiceRef_.getDissonance());
             }
         }
 
         void sliderValueChanged(juce::Slider* slider) override {
+            // Every manual edit resyncs EvolutionEngine's internal state to
+            // match, regardless of that parameter's toggle state. Without
+            // this, if a parameter's Evolution toggle is on (the default),
+            // the engine keeps writing its own stale internal value back
+            // over your drag within ~1.5ms (every 64 samples) — the value
+            // visibly snaps back to wherever Evolution had drifted to,
+            // fighting you the whole time you're not actively dragging.
+            // Resyncing means Evolution picks up and drifts onward *from*
+            // the value you just set, instead of discarding it.
             if (slider == &volumeSlider_) {
-                voiceRef_.setVolume(static_cast<float>(volumeSlider_.getValue()));
+                const float value = static_cast<float>(volumeSlider_.getValue());
+                voiceRef_.setVolume(value);
+                evolutionEngineRef_.resyncVolume(value);
             } else if (slider == &pitchRangeSlider_) {
-                voiceRef_.setPitchRange(static_cast<float>(pitchRangeSlider_.getMinValue()),
-                                         static_cast<float>(pitchRangeSlider_.getMaxValue()));
+                const float low = static_cast<float>(pitchRangeSlider_.getMinValue());
+                const float high = static_cast<float>(pitchRangeSlider_.getMaxValue());
+                voiceRef_.setPitchRange(low, high);
+                evolutionEngineRef_.resyncPitchRange(low, high);
             } else if (slider == &timbreSlider_) {
-                voiceRef_.setTimbre(static_cast<float>(timbreSlider_.getValue()));
+                const float value = static_cast<float>(timbreSlider_.getValue());
+                voiceRef_.setTimbre(value);
+                evolutionEngineRef_.resyncTimbre(value);
             } else if (slider == &motionSlider_) {
-                voiceRef_.setMotion(static_cast<float>(motionSlider_.getValue()));
+                const float value = static_cast<float>(motionSlider_.getValue());
+                voiceRef_.setMotion(value);
+                evolutionEngineRef_.resyncMotion(value);
             } else if (slider == &complexitySlider_) {
-                voiceRef_.setComplexity(static_cast<float>(complexitySlider_.getValue()));
+                const float value = static_cast<float>(complexitySlider_.getValue());
+                voiceRef_.setComplexity(value);
+                evolutionEngineRef_.resyncComplexity(value);
             } else if (slider == &dissonanceSlider_) {
-                voiceRef_.setDissonance(static_cast<float>(dissonanceSlider_.getValue()));
+                const float value = static_cast<float>(dissonanceSlider_.getValue());
+                voiceRef_.setDissonance(value);
+                evolutionEngineRef_.resyncDissonance(value);
             }
 
             if (owner_ != nullptr) {
@@ -528,7 +699,8 @@ private:
         // triggering listener callbacks (used after Stop/Reset and by the
         // Evolution auto-refresh timer). Skips any control the user is
         // currently dragging, so autonomous evolution doesn't fight a live
-        // gesture.
+        // gesture. Does not touch the Evolution toggle states — those are
+        // independent user preference, only reset via resetEvolutionToggles().
         void refreshFromModel() {
             if (!enabledButton_.isMouseButtonDown()) {
                 enabledButton_.setToggleState(voiceRef_.isEnabled(), juce::dontSendNotification);
@@ -555,7 +727,25 @@ private:
             }
         }
 
+        // Restores all 6 Evolution toggles to their default (on) state —
+        // part of a full Stop/Reset, not the ordinary model-sync above.
+        void resetEvolutionToggles() {
+            for (auto* toggle : evolutionToggles()) {
+                toggle->setToggleState(true, juce::dontSendNotification);
+            }
+            evolutionEngineRef_.setVolumeEnabled(true);
+            evolutionEngineRef_.setPitchRangeEnabled(true);
+            evolutionEngineRef_.setTimbreEnabled(true);
+            evolutionEngineRef_.setMotionEnabled(true);
+            evolutionEngineRef_.setComplexityEnabled(true);
+            evolutionEngineRef_.setDissonanceEnabled(true);
+        }
+
     private:
+        static constexpr int kEvolutionToggleCount = 6;
+        static constexpr const char* kEvolutionCaptions[kEvolutionToggleCount] = {
+            "Volume", "Range", "Timbre", "Motion", "Complexity", "Dissonance"};
+
         void setUpLabel(juce::Label& label, const char* labelText) {
             addAndMakeVisible(label);
             label.setText(labelText, juce::dontSendNotification);
@@ -587,8 +777,36 @@ private:
             slider.addListener(this);
         }
 
+        void setUpEvolutionCaption(juce::Label& label, const char* labelText) {
+            addAndMakeVisible(label);
+            label.setText(labelText, juce::dontSendNotification);
+            label.setFont(juce::Font(juce::FontOptions(9.0f)));
+            label.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
+            label.setJustificationType(juce::Justification::centred);
+        }
+
+        void setUpEvolutionToggle(juce::ToggleButton& toggle) {
+            addAndMakeVisible(toggle);
+            toggle.setName("evolutionToggle");
+            toggle.setButtonText("");
+            toggle.setToggleState(true, juce::dontSendNotification);
+            toggle.addListener(this);
+        }
+
+        std::array<juce::Label*, kEvolutionToggleCount> evolutionCaptionLabels() {
+            return {&volumeEvoLabel_, &pitchRangeEvoLabel_, &timbreEvoLabel_, &motionEvoLabel_,
+                    &complexityEvoLabel_, &dissonanceEvoLabel_};
+        }
+
+        std::array<juce::ToggleButton*, kEvolutionToggleCount> evolutionToggles() {
+            return {&volumeEvoToggle_,     &pitchRangeEvoToggle_, &timbreEvoToggle_,
+                    &motionEvoToggle_,     &complexityEvoToggle_, &dissonanceEvoToggle_};
+        }
+
         VoiceModel& voiceRef_;
+        EvolutionEngine& evolutionEngineRef_;
         JerricanEditor* owner_;
+        int dividerY_ = 0;
         juce::Label nameLabel_;
         juce::Label volumeLabel_;
         juce::Label pitchRangeLabel_;
@@ -603,6 +821,19 @@ private:
         juce::Slider motionSlider_;
         juce::Slider complexitySlider_;
         juce::Slider dissonanceSlider_;
+        juce::Label evolutionSectionLabel_;
+        juce::Label volumeEvoLabel_;
+        juce::Label pitchRangeEvoLabel_;
+        juce::Label timbreEvoLabel_;
+        juce::Label motionEvoLabel_;
+        juce::Label complexityEvoLabel_;
+        juce::Label dissonanceEvoLabel_;
+        juce::ToggleButton volumeEvoToggle_;
+        juce::ToggleButton pitchRangeEvoToggle_;
+        juce::ToggleButton timbreEvoToggle_;
+        juce::ToggleButton motionEvoToggle_;
+        juce::ToggleButton complexityEvoToggle_;
+        juce::ToggleButton dissonanceEvoToggle_;
     };
 
     void buttonClicked(juce::Button* button) override {
@@ -610,9 +841,18 @@ private:
             isPlaying_.store(true, std::memory_order_relaxed);
             statusLabel.setText("Transport running", juce::dontSendNotification);
         } else if (button == &stopButton) {
+            // Just halts new grain spawning — existing grains ring out on
+            // their own, and every knob stays exactly where it was, so
+            // pressing Play again picks up right where you left off.
             isPlaying_.store(false, std::memory_order_relaxed);
+            statusLabel.setText("Transport stopped", juce::dontSendNotification);
+        } else if (button == &resetButton) {
+            // Explicitly snaps every voice back to its starting values —
+            // separate from Stop, since that used to happen together and
+            // made Stop feel like it was yanking the controls out from
+            // under you.
             resetVoicesToInitialState();
-            statusLabel.setText("Transport stopped — voices reset", juce::dontSendNotification);
+            statusLabel.setText("Voices reset to defaults", juce::dontSendNotification);
         } else if (button == &randomizeButton) {
             // A hard reroll of every lever, regardless of transport or
             // Evolution state — not a subtle nudge. Must also reset each
@@ -640,7 +880,8 @@ private:
 
                 const float center = (low + high) * 0.5f;
                 const float width = high - low;
-                evolutionEngines_[i].resetTo(center, width, timbre, motion, complexity, dissonance);
+                evolutionEngines_[i].resetTo(center, width, volume, timbre, motion, complexity,
+                                              dissonance);
                 grainClouds_[i].rerollDrift(low, high);
 
                 voiceRows_[i]->refreshFromModel();
@@ -657,6 +898,10 @@ private:
         } else if (slider == &evolutionSpeedSlider) {
             evolutionSpeed_.store(static_cast<float>(evolutionSpeedSlider.getValue()),
                                   std::memory_order_relaxed);
+        } else if (slider == &roomSlider) {
+            reverbRoom_.store(static_cast<float>(roomSlider.getValue()), std::memory_order_relaxed);
+        } else if (slider == &decaySlider) {
+            reverbDecay_.store(static_cast<float>(decaySlider.getValue()), std::memory_order_relaxed);
         }
     }
 
@@ -680,11 +925,12 @@ private:
             voices_[i].setComplexity(initial.complexity);
             voices_[i].setDissonance(initial.dissonance);
             voiceRows_[i]->refreshFromModel();
+            voiceRows_[i]->resetEvolutionToggles();
 
             const float center = (initial.pitchLow + initial.pitchHigh) * 0.5f;
             const float width = initial.pitchHigh - initial.pitchLow;
-            evolutionEngines_[i].resetTo(center, width, initial.timbre, initial.motion,
-                                          initial.complexity, initial.dissonance);
+            evolutionEngines_[i].resetTo(center, width, initial.volume, initial.timbre,
+                                          initial.motion, initial.complexity, initial.dissonance);
         }
     }
 
@@ -715,15 +961,24 @@ private:
     juce::Label statusLabel;
     juce::TextButton playButton;
     juce::TextButton stopButton;
+    juce::TextButton resetButton;
     juce::TextButton randomizeButton;
     juce::Label evolutionTitleLabel;
     juce::Label evolutionAmountLabel;
     juce::Slider evolutionAmountSlider;
     juce::Label evolutionSpeedLabel;
     juce::Slider evolutionSpeedSlider;
+    juce::Label reverbTitleLabel;
+    juce::Label roomLabel;
+    juce::Slider roomSlider;
+    juce::Label decayLabel;
+    juce::Slider decaySlider;
     std::atomic<bool> isPlaying_{false};
     std::atomic<float> evolutionAmount_{0.0f};
     std::atomic<float> evolutionSpeed_{0.5f};
+    std::atomic<float> reverbRoom_{0.0f};
+    std::atomic<float> reverbDecay_{0.0f};
+    juce::Reverb reverb_;
     std::array<VoiceModel, 4> voices_;
     std::array<GrainCloud, 4> grainClouds_;
     std::array<EvolutionEngine, 4> evolutionEngines_;
@@ -734,6 +989,7 @@ private:
 class JerricanMainWindow : public juce::DocumentWindow {
 public:
     JerricanMainWindow() : juce::DocumentWindow("Jerrican", juce::Colours::black, juce::DocumentWindow::allButtons) {
+        setUsingNativeTitleBar(true);
         setContentOwned(new JerricanEditor(), true);
         setResizable(true, true);
         centreWithSize(1180, 900);
