@@ -20,7 +20,7 @@ int main() {
         engine.resetTo(0.5f, 0.2f, 0.5f, 0.3f, 0.4f, 0.6f);
 
         for (int i = 0; i < static_cast<int>(kSampleRate) * 2; ++i) {
-            engine.update(voice, 0.0f);
+            engine.update(voice, 0.0f, 1.0f);
         }
 
         assert(voice.getPitchRangeLow() == 0.4f);
@@ -45,7 +45,7 @@ int main() {
         bool dissonanceChanged = false;
 
         for (int i = 0; i < static_cast<int>(kSampleRate) * 5; ++i) {
-            engine.update(voice, 1.0f);
+            engine.update(voice, 1.0f, 1.0f);
             if (voice.getTimbre() != 0.5f) timbreChanged = true;
             if (voice.getMotion() != 0.3f) motionChanged = true;
             if (voice.getComplexity() != 0.4f) complexityChanged = true;
@@ -70,10 +70,32 @@ int main() {
         engine.resetTo(0.5f, 0.2f, 0.5f, 0.3f, 0.4f, 0.6f);
 
         for (int i = 0; i < static_cast<int>(kSampleRate) * 5; ++i) {
-            engine.update(voice, 1.0f);
+            engine.update(voice, 1.0f, 1.0f);
             const float width = voice.getPitchRangeHigh() - voice.getPitchRangeLow();
             assert(width > 0.19f && width < 0.21f);
         }
+    }
+
+    // Amount and Speed are decoupled: amount > 0 with speed == 0 still
+    // picks new internal targets (retargeting depends on amount only),
+    // but the voice's visible values never move (smoothing depends on
+    // speed only, and zero smoothing means zero movement).
+    {
+        VoiceModel voice("Test", true, 0.8f, 0.4f, 0.6f, 0.5f, 0.3f, 0.4f, 0.6f);
+        EvolutionEngine engine(4u);
+        engine.setSampleRate(kSampleRate);
+        engine.resetTo(0.5f, 0.2f, 0.5f, 0.3f, 0.4f, 0.6f);
+
+        for (int i = 0; i < static_cast<int>(kSampleRate) * 5; ++i) {
+            engine.update(voice, 1.0f, 0.0f);
+        }
+
+        assert(voice.getPitchRangeLow() == 0.4f);
+        assert(voice.getPitchRangeHigh() == 0.6f);
+        assert(voice.getTimbre() == 0.5f);
+        assert(voice.getMotion() == 0.3f);
+        assert(voice.getComplexity() == 0.4f);
+        assert(voice.getDissonance() == 0.6f);
     }
 
     std::cout << "EvolutionEngine tests passed" << std::endl;

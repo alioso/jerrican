@@ -17,6 +17,11 @@ juce_add_gui_app(JerricanApp
 
 juce_generate_juce_header(JerricanApp)
 
+juce_add_binary_data(JerricanAssets
+    SOURCES
+        Resources/AppIcon.png
+)
+
 target_sources(JerricanApp
     PRIVATE
         Sources/JerricanApp/Main.cpp
@@ -81,6 +86,7 @@ target_compile_definitions(JerricanApp
 
 target_link_libraries(JerricanApp
     PRIVATE
+        JerricanAssets
         juce::juce_gui_extra
         juce::juce_audio_basics
         juce::juce_audio_devices

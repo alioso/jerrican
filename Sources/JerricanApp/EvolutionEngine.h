@@ -8,11 +8,14 @@
 
 // One per voice. Drives the voice's own macros (Pitch Range center, Timbre,
 // Motion, Complexity, Dissonance) to wander on their own over time, scaled
-// by a global `evolution` amount: 0 = the macros stay exactly where the
-// user set them (update() is a no-op), 1 = they take on a life of their
-// own. Uses the same "occasionally pick a new random target, smooth toward
-// it" technique as GrainCloud's internal drift, just applied to the macro
-// values themselves instead of grain-cloud-internal state.
+// by two independent global controls: Amount (0 = the macros stay exactly
+// where the user set them — update() is a no-op regardless of Speed; 1 =
+// new targets are picked often) and Speed (how quickly the current value
+// glides toward whichever target was last picked — independent of how
+// often a new one is chosen). Uses the same "occasionally pick a new
+// random target, smooth toward it" technique as GrainCloud's internal
+// drift, just applied to the macro values themselves instead of
+// grain-cloud-internal state.
 //
 // Pitch range *width* is held fixed at whatever resetTo() was given — only
 // where the range sits wanders, not how wide it is, so it can't collapse
@@ -34,15 +37,15 @@ public:
         sampleCounter_ = 0;
     }
 
-    // Called once per sample. Provably inert at evolution <= 0 — returns
-    // immediately without touching the voice.
-    void update(VoiceModel& voice, float evolution) {
-        if (evolution <= 0.0f) {
+    // Called once per sample. Provably inert at amount <= 0 — returns
+    // immediately without touching the voice, regardless of speed.
+    void update(VoiceModel& voice, float amount, float speed) {
+        if (amount <= 0.0f) {
             return;
         }
 
         const float retargetProbabilityPerSample =
-            (evolution * retargetRateSpanHz) / static_cast<float>(sampleRate_);
+            (amount * retargetRateSpanHz) / static_cast<float>(sampleRate_);
         if (random_.nextFloat01() < retargetProbabilityPerSample) {
             const float halfWidth = pitchWidth_ * 0.5f;
             pitchCenterTarget_ = random_.nextFloatRange(halfWidth, 1.0f - halfWidth);
@@ -52,7 +55,7 @@ public:
             dissonanceTarget_ = random_.nextFloat01();
         }
 
-        const float smoothing = evolution * smoothingCoefficientSpan;
+        const float smoothing = speed * smoothingCoefficientSpan;
         pitchCenterCurrent_ += (pitchCenterTarget_ - pitchCenterCurrent_) * smoothing;
         timbreCurrent_ += (timbreTarget_ - timbreCurrent_) * smoothing;
         motionCurrent_ += (motionTarget_ - motionCurrent_) * smoothing;
