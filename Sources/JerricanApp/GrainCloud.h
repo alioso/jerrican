@@ -7,6 +7,7 @@
 
 #include "FastRandom.h"
 #include "Grain.h"
+#include "HarmonicScale.h"
 #include "VoiceOscillator.h"
 
 // One per voice. Owns a fixed-size pool of grains plus the autonomous
@@ -45,9 +46,10 @@ public:
     }
 
     Grain::StereoSample renderSample(float pitchRangeLow, float pitchRangeHigh, float timbre,
-                                      float motion, float complexity, float volume) {
+                                      float motion, float complexity, float volume,
+                                      float dissonance = 1.0f) {
         updateDrift(pitchRangeLow, pitchRangeHigh, motion);
-        maybeSpawnGrain(pitchRangeLow, pitchRangeHigh, timbre, complexity);
+        maybeSpawnGrain(pitchRangeLow, pitchRangeHigh, timbre, complexity, dissonance);
 
         float left = 0.0f;
         float right = 0.0f;
@@ -84,7 +86,7 @@ private:
         breathingGain_ += (breathingTarget_ - breathingGain_) * smoothingCoefficient;
     }
 
-    void maybeSpawnGrain(float low, float high, float timbre, float complexity) {
+    void maybeSpawnGrain(float low, float high, float timbre, float complexity, float dissonance) {
         const float grainsPerSecond = std::max(0.0f, complexity) * maxGrainsPerSecond;
         const float spawnProbabilityPerSample = grainsPerSecond / static_cast<float>(sampleRate_);
         if (random_.nextFloat01() >= spawnProbabilityPerSample) {
@@ -99,7 +101,14 @@ private:
             const float spread = (high - low) * localSpreadFraction;
             const float lo = std::max(low, std::min(high, driftCenter_ - spread));
             const float hi = std::max(low, std::min(high, driftCenter_ + spread));
-            const float pitch = random_.nextFloatRange(std::min(lo, hi), std::max(lo, hi));
+            const float rawPitch = random_.nextFloatRange(std::min(lo, hi), std::max(lo, hi));
+
+            // Dissonance 0 = fully quantized to the shared consonant scale
+            // (so voices harmonize with each other), 1 = fully free/
+            // continuous like before this macro existed.
+            const float quantizedPitch = HarmonicScale::quantize(rawPitch);
+            const float pitch = quantizedPitch + (rawPitch - quantizedPitch) * dissonance;
+
             const float durationMs = random_.nextFloatRange(minGrainDurationMs_, maxGrainDurationMs_);
             const float pan = random_.nextFloat01();
 

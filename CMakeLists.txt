@@ -63,6 +63,15 @@ target_include_directories(EvolutionEngineTests
         ${CMAKE_CURRENT_SOURCE_DIR}/Sources/JerricanApp
 )
 
+add_executable(HarmonicScaleTests
+    Tests/HarmonicScaleTest.cpp
+)
+
+target_include_directories(HarmonicScaleTests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Sources/JerricanApp
+)
+
 target_compile_definitions(JerricanApp
     PRIVATE
         JUCE_WEB_BROWSER=0

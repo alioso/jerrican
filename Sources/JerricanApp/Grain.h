@@ -70,11 +70,11 @@ public:
 private:
     static constexpr float halfPi = 1.5707963267948966f;
     static constexpr float twoPi = 6.283185307179586f;
-    static constexpr float attackFraction = 0.06f;
-    static constexpr float decayShape = 2.2f;
+    static constexpr float attackFraction = 0.15f;
+    static constexpr float decayShape = 1.4f;
     static constexpr float filterSweepCurve = 0.5f;
-    static constexpr float filterStartMultiple = 10.0f;
-    static constexpr float filterEndMultiple = 2.0f;
+    static constexpr float filterStartMultiple = 6.0f;
+    static constexpr float filterEndMultiple = 3.0f;
 
     static float hannEnvelope(float t) { return 0.5f - 0.5f * std::cos(twoPi * t); }
 

@@ -4,6 +4,7 @@
 #include <array>
 
 #include "EvolutionEngine.h"
+#include "FastRandom.h"
 #include "Grain.h"
 #include "GrainCloud.h"
 #include "VoiceModel.h"
@@ -17,19 +18,23 @@ public:
         : voices_{VoiceModel(kInitialVoices[0].name, kInitialVoices[0].enabled,
                               kInitialVoices[0].volume, kInitialVoices[0].pitchLow,
                               kInitialVoices[0].pitchHigh, kInitialVoices[0].timbre,
-                              kInitialVoices[0].motion, kInitialVoices[0].complexity),
+                              kInitialVoices[0].motion, kInitialVoices[0].complexity,
+                              kInitialVoices[0].dissonance),
                   VoiceModel(kInitialVoices[1].name, kInitialVoices[1].enabled,
                               kInitialVoices[1].volume, kInitialVoices[1].pitchLow,
                               kInitialVoices[1].pitchHigh, kInitialVoices[1].timbre,
-                              kInitialVoices[1].motion, kInitialVoices[1].complexity),
+                              kInitialVoices[1].motion, kInitialVoices[1].complexity,
+                              kInitialVoices[1].dissonance),
                   VoiceModel(kInitialVoices[2].name, kInitialVoices[2].enabled,
                               kInitialVoices[2].volume, kInitialVoices[2].pitchLow,
                               kInitialVoices[2].pitchHigh, kInitialVoices[2].timbre,
-                              kInitialVoices[2].motion, kInitialVoices[2].complexity),
+                              kInitialVoices[2].motion, kInitialVoices[2].complexity,
+                              kInitialVoices[2].dissonance),
                   VoiceModel(kInitialVoices[3].name, kInitialVoices[3].enabled,
                               kInitialVoices[3].volume, kInitialVoices[3].pitchLow,
                               kInitialVoices[3].pitchHigh, kInitialVoices[3].timbre,
-                              kInitialVoices[3].motion, kInitialVoices[3].complexity)},
+                              kInitialVoices[3].motion, kInitialVoices[3].complexity,
+                              kInitialVoices[3].dissonance)},
           grainClouds_{GrainCloud(0x1a2b3c4du, kInitialVoices[0].minGrainDurationMs,
                                    kInitialVoices[0].maxGrainDurationMs, kInitialVoices[0].character),
                        GrainCloud(0x5e6f7081u, kInitialVoices[1].minGrainDurationMs,
@@ -45,7 +50,7 @@ public:
             const float center = (initial.pitchLow + initial.pitchHigh) * 0.5f;
             const float width = initial.pitchHigh - initial.pitchLow;
             evolutionEngines_[i].resetTo(center, width, initial.timbre, initial.motion,
-                                          initial.complexity);
+                                          initial.complexity, initial.dissonance);
         }
 
         addAndMakeVisible(titleLabel);
@@ -105,7 +110,7 @@ public:
 
         updateStatus();
 
-        setSize(1180, 920);
+        setSize(1180, 900);
         setAudioChannels(0, 2);
         startTimerHz(30);
     }
@@ -133,9 +138,9 @@ public:
 
         voiceHeaderLabel.setBounds(40, 120, 200, 28);
 
-        const int rowHeight = 130;
-        const int rowGap = 14;
-        const int top = 160;
+        const int rowHeight = 140;
+        const int rowGap = 12;
+        const int top = 150;
         const int width = getWidth() - 80;
 
         for (size_t i = 0; i < voiceRows_.size(); ++i) {
@@ -186,7 +191,7 @@ public:
                 const auto voiceSample =
                     cloud.renderSample(voice.getPitchRangeLow(), voice.getPitchRangeHigh(),
                                         voice.getTimbre(), voice.getMotion(), complexity,
-                                        voice.getVolume());
+                                        voice.getVolume(), voice.getDissonance());
                 mixedLeft += voiceSample.left;
                 mixedRight += voiceSample.right;
             }
@@ -209,6 +214,7 @@ private:
         float timbre;
         float motion;
         float complexity;
+        float dissonance;
         float minGrainDurationMs;
         float maxGrainDurationMs;
         Grain::Character character;
@@ -222,20 +228,24 @@ private:
     // Drone's long grains need a much lower Complexity number than a
     // Pulse's short ones to reach a comparable density.
     //
-    // Character::Plucked (Pulse/Spark) gets a fast-attack envelope and a
-    // bright-to-dark filter sweep per grain — what makes them read as
-    // produced instruments rather than static bleeps. Character::Ambient
-    // (Drone/Haze) is the original unfiltered symmetric envelope. Drone's
-    // row is unchanged from before Character existed — Ambient just names
-    // what it already did.
+    // Character::Plucked (Pulse/Spark) gets a softened fast-attack envelope
+    // and a gentle bright-to-dark filter sweep per grain, with grains long
+    // and dense enough to overlap into a continuous evolving texture rather
+    // than discrete pings. Character::Ambient (Drone/Haze) is the original
+    // unfiltered symmetric envelope. Drone's row is unchanged from before
+    // Character existed — Ambient just names what it already did.
+    //
+    // Dissonance near 0 for everyone by default: voices quantize mostly to
+    // the shared consonant scale out of the box (see HarmonicScale), so
+    // nothing is constantly dissonant/spooky unless deliberately opened up.
     static constexpr std::array<InitialVoice, 4> kInitialVoices{
-        {{"Pulse", true, 0.65f, 0.40f, 0.65f, 0.40f, 0.30f, 0.10f, 60.0f, 180.0f,
+        {{"Pulse", true, 0.65f, 0.40f, 0.65f, 0.40f, 0.45f, 0.35f, 0.15f, 200.0f, 500.0f,
           Grain::Character::Plucked},
-         {"Drone", true, 0.60f, 0.05f, 0.20f, 0.15f, 0.10f, 0.12f, 1500.0f, 4000.0f,
+         {"Drone", true, 0.60f, 0.05f, 0.20f, 0.15f, 0.10f, 0.12f, 0.15f, 1500.0f, 4000.0f,
           Grain::Character::Ambient},
-         {"Spark", true, 0.55f, 0.60f, 0.90f, 0.70f, 0.35f, 0.30f, 40.0f, 100.0f,
+         {"Spark", true, 0.55f, 0.60f, 0.85f, 0.70f, 0.50f, 0.45f, 0.15f, 150.0f, 400.0f,
           Grain::Character::Plucked},
-         {"Haze", true, 0.50f, 0.15f, 0.35f, 0.75f, 0.20f, 0.15f, 2000.0f, 5000.0f,
+         {"Haze", true, 0.50f, 0.15f, 0.35f, 0.75f, 0.20f, 0.15f, 0.15f, 2000.0f, 5000.0f,
           Grain::Character::Ambient}}};
 
     class VoiceRow : public juce::Component, private juce::Button::Listener, private juce::Slider::Listener {
@@ -274,12 +284,18 @@ private:
                         juce::Slider::LinearHorizontal);
             complexitySlider_.setRange(0.0, 1.0);
             complexitySlider_.setValue(voiceRef_.getComplexity());
+
+            setUpSlider(dissonanceSlider_, dissonanceLabel_, "Dissonance",
+                        juce::Slider::LinearHorizontal);
+            dissonanceSlider_.setRange(0.0, 1.0);
+            dissonanceSlider_.setValue(voiceRef_.getDissonance());
         }
 
         void resized() override {
             constexpr int left = 0;
             constexpr int row1 = 0;
-            constexpr int row2 = 50;
+            constexpr int row2 = 44;
+            constexpr int row3 = 88;
             const int controlWidth = std::max(140, (getWidth() - 40) / 4 - 20);
 
             nameLabel_.setBounds(left, row1, 130, 22);
@@ -301,6 +317,9 @@ private:
             const int col4 = col3 + controlWidth + 20;
             complexityLabel_.setBounds(col4, row2, 100, 18);
             complexitySlider_.setBounds(col4, row2 + 20, controlWidth, 24);
+
+            dissonanceLabel_.setBounds(left, row3, 100, 18);
+            dissonanceSlider_.setBounds(left, row3 + 20, controlWidth, 24);
         }
 
         void buttonClicked(juce::Button* button) override {
@@ -324,6 +343,8 @@ private:
                 voiceRef_.setMotion(static_cast<float>(motionSlider_.getValue()));
             } else if (slider == &complexitySlider_) {
                 voiceRef_.setComplexity(static_cast<float>(complexitySlider_.getValue()));
+            } else if (slider == &dissonanceSlider_) {
+                voiceRef_.setDissonance(static_cast<float>(dissonanceSlider_.getValue()));
             }
 
             if (owner_ != nullptr) {
@@ -357,6 +378,9 @@ private:
             if (!complexitySlider_.isMouseButtonDown()) {
                 complexitySlider_.setValue(voiceRef_.getComplexity(), juce::dontSendNotification);
             }
+            if (!dissonanceSlider_.isMouseButtonDown()) {
+                dissonanceSlider_.setValue(voiceRef_.getDissonance(), juce::dontSendNotification);
+            }
         }
 
     private:
@@ -382,12 +406,14 @@ private:
         juce::Label timbreLabel_;
         juce::Label motionLabel_;
         juce::Label complexityLabel_;
+        juce::Label dissonanceLabel_;
         juce::ToggleButton enabledButton_;
         juce::Slider volumeSlider_;
         juce::Slider pitchRangeSlider_;
         juce::Slider timbreSlider_;
         juce::Slider motionSlider_;
         juce::Slider complexitySlider_;
+        juce::Slider dissonanceSlider_;
     };
 
     void buttonClicked(juce::Button* button) override {
@@ -399,9 +425,36 @@ private:
             resetVoicesToInitialState();
             statusLabel.setText("Transport stopped — voices reset", juce::dontSendNotification);
         } else if (button == &randomizeButton) {
+            // A hard reroll of every lever, regardless of transport or
+            // Evolution state — not a subtle nudge. Must also reset each
+            // EvolutionEngine's internal target, otherwise (when Evolution
+            // > 0) its next tick would immediately smooth the freshly
+            // randomized values back toward its own stale pre-randomize
+            // target, silently undoing this.
             for (size_t i = 0; i < voices_.size(); ++i) {
-                grainClouds_[i].rerollDrift(voices_[i].getPitchRangeLow(),
-                                             voices_[i].getPitchRangeHigh());
+                const float a = randomizeRandom_.nextFloat01();
+                const float b = randomizeRandom_.nextFloat01();
+                const float low = std::min(a, b);
+                const float high = std::max(a, b);
+                const float timbre = randomizeRandom_.nextFloat01();
+                const float motion = randomizeRandom_.nextFloat01();
+                const float complexity = randomizeRandom_.nextFloat01();
+                const float volume = randomizeRandom_.nextFloat01();
+                const float dissonance = randomizeRandom_.nextFloat01();
+
+                voices_[i].setPitchRange(low, high);
+                voices_[i].setTimbre(timbre);
+                voices_[i].setMotion(motion);
+                voices_[i].setComplexity(complexity);
+                voices_[i].setVolume(volume);
+                voices_[i].setDissonance(dissonance);
+
+                const float center = (low + high) * 0.5f;
+                const float width = high - low;
+                evolutionEngines_[i].resetTo(center, width, timbre, motion, complexity, dissonance);
+                grainClouds_[i].rerollDrift(low, high);
+
+                voiceRows_[i]->refreshFromModel();
             }
         }
 
@@ -433,12 +486,13 @@ private:
             voices_[i].setTimbre(initial.timbre);
             voices_[i].setMotion(initial.motion);
             voices_[i].setComplexity(initial.complexity);
+            voices_[i].setDissonance(initial.dissonance);
             voiceRows_[i]->refreshFromModel();
 
             const float center = (initial.pitchLow + initial.pitchHigh) * 0.5f;
             const float width = initial.pitchHigh - initial.pitchLow;
             evolutionEngines_[i].resetTo(center, width, initial.timbre, initial.motion,
-                                          initial.complexity);
+                                          initial.complexity, initial.dissonance);
         }
     }
 
@@ -474,6 +528,7 @@ private:
     std::array<GrainCloud, 4> grainClouds_;
     std::array<EvolutionEngine, 4> evolutionEngines_;
     std::array<std::unique_ptr<VoiceRow>, 4> voiceRows_;
+    FastRandom randomizeRandom_{0xc0ffeeu};
 };
 
 class JerricanMainWindow : public juce::DocumentWindow {
@@ -481,7 +536,7 @@ public:
     JerricanMainWindow() : juce::DocumentWindow("Jerrican", juce::Colours::black, juce::DocumentWindow::allButtons) {
         setContentOwned(new JerricanEditor(), true);
         setResizable(true, true);
-        centreWithSize(1180, 920);
+        centreWithSize(1180, 900);
         setVisible(true);
     }
 

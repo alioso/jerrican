@@ -137,6 +137,27 @@ int main() {
         assert(!audibleAfterDecay);
     }
 
+    // dissonance = 0.0 (fully quantized to the shared consonant scale):
+    // output must still stay bounded and the cloud must still spawn grains
+    // normally (the music-theory correctness of quantize() itself is
+    // covered by HarmonicScaleTest, since GrainCloud doesn't expose
+    // individual grain pitches to inspect).
+    {
+        GrainCloud cloud(8u);
+        cloud.setSampleRate(kSampleRate);
+
+        bool everAudible = false;
+        for (int i = 0; i < static_cast<int>(kSampleRate); ++i) {
+            const auto sample = cloud.renderSample(0.3f, 0.7f, 0.5f, 0.5f, 1.0f, 1.0f, 0.0f);
+            assert(sample.left >= -1.0f && sample.left <= 1.0f);
+            assert(sample.right >= -1.0f && sample.right <= 1.0f);
+            if (sample.left != 0.0f || sample.right != 0.0f) {
+                everAudible = true;
+            }
+        }
+        assert(everAudible);
+    }
+
     std::cout << "GrainCloud tests passed" << std::endl;
     return 0;
 }

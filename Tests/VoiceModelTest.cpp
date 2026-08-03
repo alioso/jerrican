@@ -4,7 +4,7 @@
 #include "VoiceModel.h"
 
 int main() {
-    VoiceModel voice("Voice 1", true, 0.82f, 0.2f, 0.6f, 0.5f, 0.4f, 0.3f);
+    VoiceModel voice("Voice 1", true, 0.82f, 0.2f, 0.6f, 0.5f, 0.4f, 0.3f, 0.6f);
 
     assert(voice.getName() == "Voice 1");
     assert(voice.isEnabled());
@@ -14,6 +14,7 @@ int main() {
     assert(voice.getTimbre() == 0.5f);
     assert(voice.getMotion() == 0.4f);
     assert(voice.getComplexity() == 0.3f);
+    assert(voice.getDissonance() == 0.6f);
 
     voice.setEnabled(false);
     voice.setVolume(1.8f);
@@ -21,6 +22,7 @@ int main() {
     voice.setTimbre(-0.2f);
     voice.setMotion(2.0f);
     voice.setComplexity(-1.0f);
+    voice.setDissonance(-1.0f);
 
     assert(!voice.isEnabled());
     assert(voice.getVolume() == 1.0f);
@@ -28,6 +30,7 @@ int main() {
     assert(voice.getTimbre() == 0.0f);
     assert(voice.getMotion() == 1.0f);
     assert(voice.getComplexity() == 0.0f);
+    assert(voice.getDissonance() == 0.0f);
 
     std::cout << voice.getSummary() << std::endl;
     return 0;

@@ -7,12 +7,12 @@
 #include "VoiceModel.h"
 
 // One per voice. Drives the voice's own macros (Pitch Range center, Timbre,
-// Motion, Complexity) to wander on their own over time, scaled by a global
-// `evolution` amount: 0 = the macros stay exactly where the user set them
-// (update() is a no-op), 1 = they take on a life of their own. Uses the
-// same "occasionally pick a new random target, smooth toward it" technique
-// as GrainCloud's internal drift, just applied to the macro values
-// themselves instead of grain-cloud-internal state.
+// Motion, Complexity, Dissonance) to wander on their own over time, scaled
+// by a global `evolution` amount: 0 = the macros stay exactly where the
+// user set them (update() is a no-op), 1 = they take on a life of their
+// own. Uses the same "occasionally pick a new random target, smooth toward
+// it" technique as GrainCloud's internal drift, just applied to the macro
+// values themselves instead of grain-cloud-internal state.
 //
 // Pitch range *width* is held fixed at whatever resetTo() was given — only
 // where the range sits wanders, not how wide it is, so it can't collapse
@@ -24,12 +24,13 @@ public:
     void setSampleRate(double sampleRate) { sampleRate_ = sampleRate; }
 
     void resetTo(float pitchCenter, float pitchWidth, float timbre, float motion,
-                 float complexity) {
+                 float complexity, float dissonance) {
         pitchWidth_ = pitchWidth;
         pitchCenterCurrent_ = pitchCenterTarget_ = pitchCenter;
         timbreCurrent_ = timbreTarget_ = timbre;
         motionCurrent_ = motionTarget_ = motion;
         complexityCurrent_ = complexityTarget_ = complexity;
+        dissonanceCurrent_ = dissonanceTarget_ = dissonance;
         sampleCounter_ = 0;
     }
 
@@ -48,6 +49,7 @@ public:
             timbreTarget_ = random_.nextFloat01();
             motionTarget_ = random_.nextFloat01();
             complexityTarget_ = random_.nextFloat01();
+            dissonanceTarget_ = random_.nextFloat01();
         }
 
         const float smoothing = evolution * smoothingCoefficientSpan;
@@ -55,6 +57,7 @@ public:
         timbreCurrent_ += (timbreTarget_ - timbreCurrent_) * smoothing;
         motionCurrent_ += (motionTarget_ - motionCurrent_) * smoothing;
         complexityCurrent_ += (complexityTarget_ - complexityCurrent_) * smoothing;
+        dissonanceCurrent_ += (dissonanceTarget_ - dissonanceCurrent_) * smoothing;
 
         // The smoothed values move every sample, but writing them into the
         // (atomic) VoiceModel every sample is unnecessary churn for
@@ -66,6 +69,7 @@ public:
             voice.setTimbre(timbreCurrent_);
             voice.setMotion(motionCurrent_);
             voice.setComplexity(complexityCurrent_);
+            voice.setDissonance(dissonanceCurrent_);
         }
     }
 
@@ -86,4 +90,6 @@ private:
     float motionTarget_ = 0.5f;
     float complexityCurrent_ = 0.5f;
     float complexityTarget_ = 0.5f;
+    float dissonanceCurrent_ = 0.5f;
+    float dissonanceTarget_ = 0.5f;
 };

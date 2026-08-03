@@ -13,7 +13,8 @@
 class VoiceModel {
 public:
     VoiceModel(std::string name, bool enabled, float volume, float pitchRangeLow,
-               float pitchRangeHigh, float timbre, float motion, float complexity)
+               float pitchRangeHigh, float timbre, float motion, float complexity,
+               float dissonance)
         : name_(std::move(name)),
           enabled_(enabled),
           volume_(clamp01(volume)),
@@ -21,7 +22,8 @@ public:
           pitchRangeHigh_(clamp01(std::max(pitchRangeLow, pitchRangeHigh))),
           timbre_(clamp01(timbre)),
           motion_(clamp01(motion)),
-          complexity_(clamp01(complexity)) {}
+          complexity_(clamp01(complexity)),
+          dissonance_(clamp01(dissonance)) {}
 
     const std::string& getName() const { return name_; }
     bool isEnabled() const { return enabled_.load(std::memory_order_relaxed); }
@@ -31,6 +33,7 @@ public:
     float getTimbre() const { return timbre_.load(std::memory_order_relaxed); }
     float getMotion() const { return motion_.load(std::memory_order_relaxed); }
     float getComplexity() const { return complexity_.load(std::memory_order_relaxed); }
+    float getDissonance() const { return dissonance_.load(std::memory_order_relaxed); }
 
     void setEnabled(bool enabled) { enabled_.store(enabled, std::memory_order_relaxed); }
     void setVolume(float volume) { volume_.store(clamp01(volume), std::memory_order_relaxed); }
@@ -47,13 +50,17 @@ public:
     void setComplexity(float complexity) {
         complexity_.store(clamp01(complexity), std::memory_order_relaxed);
     }
+    void setDissonance(float dissonance) {
+        dissonance_.store(clamp01(dissonance), std::memory_order_relaxed);
+    }
 
     std::string getSummary() const {
         return name_ + " | enabled=" + (isEnabled() ? "true" : "false") +
                " | volume=" + std::to_string(getVolume()) + " | pitchRange=[" +
                std::to_string(getPitchRangeLow()) + ", " + std::to_string(getPitchRangeHigh()) +
                "] | timbre=" + std::to_string(getTimbre()) + " | motion=" +
-               std::to_string(getMotion()) + " | complexity=" + std::to_string(getComplexity());
+               std::to_string(getMotion()) + " | complexity=" + std::to_string(getComplexity()) +
+               " | dissonance=" + std::to_string(getDissonance());
     }
 
 private:
@@ -67,4 +74,5 @@ private:
     std::atomic<float> timbre_;
     std::atomic<float> motion_;
     std::atomic<float> complexity_;
+    std::atomic<float> dissonance_;
 };
