@@ -22,4 +22,9 @@ inline const juce::Colour trackOff{0xff35353bu};
 // amber used for direct/manual controls everywhere else.
 inline const juce::Colour evolutionAccent{0xff5fd8c9u};
 
+// Stop button, once there's actually something to stop — a clear "this is
+// the live/armed action" red, distinct from the warm amber used elsewhere.
+inline const juce::Colour danger{0xffef4444u};
+inline const juce::Colour dangerDeep{0xffb91c1cu};
+
 }  // namespace JerricanTheme

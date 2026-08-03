@@ -45,7 +45,7 @@ public:
             "Randomize - rerolls every voice's levers, whether playing or "
             "stopped.\n"
             "Evolution Amount - how often a voice's levers wander on their "
-            "own; 0 leaves them alone.\n"
+            "own while playing; 0, or Stop, leaves them alone.\n"
             "Evolution Speed - how fast a change glides in once Amount picks "
             "one - near-instant to almost imperceptibly slow.\n\n"
             "PER-VOICE CONTROLS\n"
@@ -154,10 +154,12 @@ public:
 
         addAndMakeVisible(playButton);
         playButton.setButtonText("Play");
+        playButton.setClickingTogglesState(false);
         playButton.addListener(this);
 
         addAndMakeVisible(stopButton);
         stopButton.setButtonText("Stop");
+        stopButton.setEnabled(false);  // nothing to stop until Play is pressed
         stopButton.addListener(this);
 
         addAndMakeVisible(resetButton);
@@ -409,11 +411,14 @@ public:
                 auto& voice = voices_[i];
                 auto& cloud = grainClouds_[i];
 
-                // Evolution runs regardless of transport state — the
-                // macros keep drifting "on their own" even while stopped,
-                // it just isn't audible until Play (matching the transport
-                // gate below, not a special case here).
-                evolutionEngines_[i].update(voice, evolutionAmount, evolutionSpeed);
+                // Evolution only runs while actually playing — Stop means
+                // genuinely frozen (matching Stop no longer resetting
+                // values either): nothing moves the knobs on its own while
+                // stopped, not even Evolution. update() already treats
+                // amount<=0 as fully inert, so gating amount to 0 here
+                // reuses that existing contract rather than adding a new
+                // one.
+                evolutionEngines_[i].update(voice, playing ? evolutionAmount : 0.0f, evolutionSpeed);
 
                 // Already-active grains ring out on their own envelope even
                 // after Stop; only new spawning is gated by the transport,
@@ -839,12 +844,18 @@ private:
     void buttonClicked(juce::Button* button) override {
         if (button == &playButton) {
             isPlaying_.store(true, std::memory_order_relaxed);
+            // Play stays enabled and just switches to its "active" colour —
+            // greying it out read as broken/unclickable rather than "running".
+            playButton.setToggleState(true, juce::dontSendNotification);
+            stopButton.setEnabled(true);
             statusLabel.setText("Transport running", juce::dontSendNotification);
         } else if (button == &stopButton) {
             // Just halts new grain spawning — existing grains ring out on
             // their own, and every knob stays exactly where it was, so
             // pressing Play again picks up right where you left off.
             isPlaying_.store(false, std::memory_order_relaxed);
+            playButton.setToggleState(false, juce::dontSendNotification);
+            stopButton.setEnabled(false);
             statusLabel.setText("Transport stopped", juce::dontSendNotification);
         } else if (button == &resetButton) {
             // Explicitly snaps every voice back to its starting values —
@@ -906,7 +917,8 @@ private:
     }
 
     void timerCallback() override {
-        if (evolutionAmount_.load(std::memory_order_relaxed) <= 0.0f) {
+        if (!isPlaying_.load(std::memory_order_relaxed) ||
+            evolutionAmount_.load(std::memory_order_relaxed) <= 0.0f) {
             return;
         }
         for (auto& row : voiceRows_) {

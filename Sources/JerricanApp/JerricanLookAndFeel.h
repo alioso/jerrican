@@ -138,11 +138,41 @@ public:
                               bool shouldDrawButtonAsDown) override {
         juce::ignoreUnused(backgroundColour);
 
-        const bool isPrimary = button.getButtonText() == "Play";
+        const bool isPlay = button.getButtonText() == "Play";
+        const bool isStop = button.getButtonText() == "Stop";
+        const bool isActive = button.getToggleState();  // Play, while actually playing
+        const bool enabled = button.isEnabled();
         auto bounds = button.getLocalBounds().toFloat().reduced(1.0f);
 
-        juce::Colour fill = isPrimary ? JerricanTheme::accentDeep : JerricanTheme::panel;
-        if (shouldDrawButtonAsDown) {
+        if (isPlay && isActive) {
+            // Ghost/outline style once running: a solid fill reads as "you
+            // can click this", but there's nothing left to do here while
+            // playing — an outlined ring keeps the amber identity without
+            // implying it's still an actionable button. Stop takes over as
+            // the one solid, clickable control.
+            g.setColour(JerricanTheme::panel);
+            g.fillRoundedRectangle(bounds, 8.0f);
+            g.setColour(JerricanTheme::accent);
+            g.drawRoundedRectangle(bounds, 8.0f, 2.0f);
+            return;
+        }
+
+        // Stop grows teeth once there's actually something to stop: red
+        // when enabled, flat grey otherwise.
+        juce::Colour fill = JerricanTheme::panel;
+        juce::Colour outline = JerricanTheme::panelBorder;
+        if (isPlay) {
+            fill = JerricanTheme::accentDeep;
+            outline = JerricanTheme::accentDeep;
+        } else if (isStop) {
+            fill = enabled ? JerricanTheme::danger : JerricanTheme::panel;
+            outline = enabled ? JerricanTheme::dangerDeep : JerricanTheme::panelBorder;
+        }
+
+        if (!enabled && !isPlay) {
+            fill = JerricanTheme::trackOff;
+            outline = JerricanTheme::panelBorder;
+        } else if (shouldDrawButtonAsDown) {
             fill = fill.darker(0.2f);
         } else if (shouldDrawButtonAsHighlighted) {
             fill = fill.brighter(0.1f);
@@ -150,12 +180,51 @@ public:
 
         g.setColour(fill);
         g.fillRoundedRectangle(bounds, 8.0f);
-        g.setColour(isPrimary ? JerricanTheme::accentDeep : JerricanTheme::panelBorder);
+        g.setColour(outline);
         g.drawRoundedRectangle(bounds, 8.0f, 1.5f);
     }
 
     juce::Font getTextButtonFont(juce::TextButton&, int buttonHeight) override {
         return juce::Font(juce::FontOptions(juce::jmin(16.0f, static_cast<float>(buttonHeight) * 0.5f)));
+    }
+
+    void drawButtonText(juce::Graphics& g, juce::TextButton& button, bool isMouseOverButton,
+                        bool isButtonDown) override {
+        const bool isPlay = button.getButtonText() == "Play";
+        const bool isStop = button.getButtonText() == "Stop";
+        if (!isPlay && !isStop) {
+            LookAndFeel_V4::drawButtonText(g, button, isMouseOverButton, isButtonDown);
+            return;
+        }
+
+        const bool isActive = button.getToggleState();
+        const bool enabled = button.isEnabled();
+        const juce::Colour colour = isPlay ? (isActive ? JerricanTheme::accent : JerricanTheme::textPrimary)
+                                            : (enabled ? JerricanTheme::textPrimary
+                                                       : JerricanTheme::textSecondary);
+
+        const auto bounds = button.getLocalBounds().toFloat();
+        const juce::Font font = getTextButtonFont(button, button.getHeight());
+        const juce::String text = button.getButtonText();
+        const float textWidth = juce::GlyphArrangement::getStringWidth(font, text);
+        constexpr float iconBoxSize = 14.0f;
+        constexpr float gap = 8.0f;
+        const float groupWidth = iconBoxSize + gap + textWidth;
+        const float startX = bounds.getCentreX() - groupWidth * 0.5f;
+
+        const auto iconBounds = juce::Rectangle<float>(startX, bounds.getCentreY() - iconBoxSize * 0.5f,
+                                                        iconBoxSize, iconBoxSize);
+        if (isPlay) {
+            drawPlayGlyph(g, iconBounds, colour, isActive);
+        } else {
+            drawStopGlyph(g, iconBounds, colour, enabled);
+        }
+
+        g.setColour(colour);
+        g.setFont(font);
+        const auto textBounds = juce::Rectangle<float>(startX + iconBoxSize + gap, bounds.getY(),
+                                                        textWidth + 4.0f, bounds.getHeight());
+        g.drawText(text, textBounds, juce::Justification::centredLeft, false);
     }
 
     void drawComboBox(juce::Graphics& g, int width, int height, bool isButtonDown, int buttonX,
@@ -193,6 +262,43 @@ public:
 
 private:
     static constexpr float trackThickness = 4.0f;
+
+    // Filled triangle while stopped (the primary "go" affordance); once
+    // playing, swaps to two static bars — reads as "already running" the
+    // same way a media player's pause icon does, reinforcing that this is
+    // now a status readout rather than something left to click.
+    static void drawPlayGlyph(juce::Graphics& g, juce::Rectangle<float> bounds, juce::Colour colour,
+                              bool active) {
+        g.setColour(colour);
+        if (!active) {
+            juce::Path triangle;
+            triangle.addTriangle(bounds.getX(), bounds.getY(), bounds.getX(), bounds.getBottom(),
+                                 bounds.getRight(), bounds.getCentreY());
+            g.fillPath(triangle);
+        } else {
+            const float barWidth = bounds.getWidth() * 0.32f;
+            g.fillRoundedRectangle(
+                juce::Rectangle<float>(bounds.getX(), bounds.getY(), barWidth, bounds.getHeight()),
+                1.5f);
+            g.fillRoundedRectangle(juce::Rectangle<float>(bounds.getRight() - barWidth, bounds.getY(),
+                                                           barWidth, bounds.getHeight()),
+                                   1.5f);
+        }
+    }
+
+    // Filled square while there's something to stop (clickable); an
+    // outline-only square once disabled, matching the same filled-vs-
+    // outline "clickable vs not" convention used for Play.
+    static void drawStopGlyph(juce::Graphics& g, juce::Rectangle<float> bounds, juce::Colour colour,
+                              bool enabled) {
+        const auto square = bounds.reduced(bounds.getWidth() * 0.12f);
+        g.setColour(colour);
+        if (enabled) {
+            g.fillRoundedRectangle(square, 2.0f);
+        } else {
+            g.drawRoundedRectangle(square, 2.0f, 1.5f);
+        }
+    }
 
     static void drawHandle(juce::Graphics& g, float centreX, float centreY) {
         constexpr float handleRadius = 7.0f;
