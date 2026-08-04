@@ -92,6 +92,10 @@ int main() {
         assert(!manager.getBinding(MidiTarget::ReverbRoom).has_value());
     }
 
+    // Target count sanity check: 13 per-voice + 4 voice-select +
+    // 4 transport + 5 global = 26.
+    { assert(kAllMidiTargets.size() == 26); }
+
     // Name <-> target round-trip, used by preset (de)serialization.
     {
         for (const auto target : kAllMidiTargets) {
@@ -101,6 +105,23 @@ int main() {
             assert(*roundTripped == target);
         }
         assert(!midiTargetFromName("NotARealTarget").has_value());
+    }
+
+    // equals() — used by PresetControls to detect dirty/matching state.
+    {
+        MidiBindingManager a;
+        MidiBindingManager b;
+        assert(a.equals(b));  // both empty
+
+        a.setBinding(MidiTarget::VoiceVolume, MidiBinding{MidiEvent::Type::ControlChange, 1, 21});
+        assert(!a.equals(b));
+
+        b.setBinding(MidiTarget::VoiceVolume, MidiBinding{MidiEvent::Type::ControlChange, 1, 21});
+        assert(a.equals(b));
+
+        // A single differing field (channel) is enough to break equality.
+        b.setBinding(MidiTarget::VoiceVolume, MidiBinding{MidiEvent::Type::ControlChange, 2, 21});
+        assert(!a.equals(b));
     }
 
     std::cout << "MidiBindingManager tests passed" << std::endl;

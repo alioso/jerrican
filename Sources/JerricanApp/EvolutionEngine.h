@@ -62,6 +62,17 @@ public:
         dissonanceEnabled_.store(enabled, std::memory_order_relaxed);
     }
 
+    // Read back a parameter's current opt-in/out state — used both to
+    // decide whether a toggle flip needs a resync and to keep an external
+    // surface (the per-voice Evolution toggle LEDs, MIDI Learn) in sync
+    // with changes made some other way.
+    bool isVolumeEnabled() const { return volumeEnabled_.load(std::memory_order_relaxed); }
+    bool isPitchRangeEnabled() const { return pitchRangeEnabled_.load(std::memory_order_relaxed); }
+    bool isTimbreEnabled() const { return timbreEnabled_.load(std::memory_order_relaxed); }
+    bool isMotionEnabled() const { return motionEnabled_.load(std::memory_order_relaxed); }
+    bool isComplexityEnabled() const { return complexityEnabled_.load(std::memory_order_relaxed); }
+    bool isDissonanceEnabled() const { return dissonanceEnabled_.load(std::memory_order_relaxed); }
+
     // Snap a parameter's internal current/target to a live value — call
     // whenever the UI writes that parameter directly (manual drag, or
     // re-enabling a toggle), so the engine picks up and drifts onward from

@@ -159,6 +159,33 @@ int main() {
         assert(std::abs(voice.getTimbre() - 0.9f) < 0.05f);
     }
 
+    // The six is*Enabled() getters track their matching setters — used by
+    // both MIDI Learn (to flip-and-resync) and the per-voice Evolution
+    // toggle LEDs (to reflect an externally-driven change).
+    {
+        EvolutionEngine engine(7u);
+        assert(engine.isVolumeEnabled());
+        assert(engine.isPitchRangeEnabled());
+        assert(engine.isTimbreEnabled());
+        assert(engine.isMotionEnabled());
+        assert(engine.isComplexityEnabled());
+        assert(engine.isDissonanceEnabled());
+
+        engine.setVolumeEnabled(false);
+        engine.setPitchRangeEnabled(false);
+        engine.setTimbreEnabled(false);
+        engine.setMotionEnabled(false);
+        engine.setComplexityEnabled(false);
+        engine.setDissonanceEnabled(false);
+
+        assert(!engine.isVolumeEnabled());
+        assert(!engine.isPitchRangeEnabled());
+        assert(!engine.isTimbreEnabled());
+        assert(!engine.isMotionEnabled());
+        assert(!engine.isComplexityEnabled());
+        assert(!engine.isDissonanceEnabled());
+    }
+
     std::cout << "EvolutionEngine tests passed" << std::endl;
     return 0;
 }

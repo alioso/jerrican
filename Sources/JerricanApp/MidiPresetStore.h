@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "MidiBindingManager.h"
+#include "PresetNameValidation.h"
 
 // Named binding-preset persistence, plain std::filesystem/fstream (no
 // JUCE, no JSON dependency) — same testability convention as the rest of
@@ -90,17 +91,6 @@ public:
 
 private:
     static constexpr const char* kExtension = ".jbind";
-
-    // Preset names come straight from user text input (the Save As
-    // prompt) and get concatenated into a filesystem path — reject
-    // anything that could escape the presets directory (path separators,
-    // "." / "..") rather than trusting it as a bare filename.
-    static bool isValidPresetName(const std::string& name) {
-        if (name.empty() || name == "." || name == "..") {
-            return false;
-        }
-        return name.find('/') == std::string::npos && name.find('\\') == std::string::npos;
-    }
 
     std::filesystem::path pathFor(const std::string& name) const {
         return directory_ / (name + kExtension);

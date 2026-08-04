@@ -14,23 +14,38 @@
 // translates each one into a MidiEvent before calling in here.
 
 // The full set of things a MIDI control can drive. Per-voice targets
-// (VoiceVolume..VoiceEnabledToggle) are bound once and apply to whichever
-// voice is currently "focused" — see JerricanEditor::focusedVoiceIndex_ —
-// rather than being bound per voice. SelectVoice1..4 move that focus.
-// Transport (Play/Stop/Reset/Randomize) is deliberately not represented
-// here — it's not MIDI-bindable, matching typical controller conventions.
+// (VoicePitchCenter..VoiceDissonanceEvoToggle) are bound once and apply
+// to whichever voice is currently "focused" — see
+// JerricanEditor::focusedVoiceIndex_ — rather than being bound per
+// voice. SelectVoice1..4 move that focus. Transport targets are the one
+// exception to "apply to the focused voice" — they're global actions,
+// same as Play/Stop/Reset/Randomize's on-screen buttons.
 enum class MidiTarget {
-    VoiceVolume,
+    // Per-voice (13): applies to the focused voice.
     VoicePitchCenter,
+    VoiceVolume,
     VoiceTimbre,
     VoiceMotion,
     VoiceComplexity,
     VoiceDissonance,
     VoiceEnabledToggle,
+    VoicePitchRangeEvoToggle,
+    VoiceVolumeEvoToggle,
+    VoiceTimbreEvoToggle,
+    VoiceMotionEvoToggle,
+    VoiceComplexityEvoToggle,
+    VoiceDissonanceEvoToggle,
+    // Voice focus (4).
     SelectVoice1,
     SelectVoice2,
     SelectVoice3,
     SelectVoice4,
+    // Transport (4).
+    TransportPlay,
+    TransportStop,
+    TransportReset,
+    TransportRandomize,
+    // Global (5).
     EvolutionAmount,
     EvolutionSpeed,
     ReverbRoom,
@@ -38,12 +53,32 @@ enum class MidiTarget {
     MasterVolume,
 };
 
-inline constexpr std::array<MidiTarget, 16> kAllMidiTargets{
-    MidiTarget::VoiceVolume,      MidiTarget::VoicePitchCenter, MidiTarget::VoiceTimbre,
-    MidiTarget::VoiceMotion,      MidiTarget::VoiceComplexity,  MidiTarget::VoiceDissonance,
-    MidiTarget::VoiceEnabledToggle, MidiTarget::SelectVoice1,   MidiTarget::SelectVoice2,
-    MidiTarget::SelectVoice3,     MidiTarget::SelectVoice4,     MidiTarget::EvolutionAmount,
-    MidiTarget::EvolutionSpeed,   MidiTarget::ReverbRoom,       MidiTarget::ReverbDecay,
+inline constexpr std::array<MidiTarget, 26> kAllMidiTargets{
+    MidiTarget::VoicePitchCenter,
+    MidiTarget::VoiceVolume,
+    MidiTarget::VoiceTimbre,
+    MidiTarget::VoiceMotion,
+    MidiTarget::VoiceComplexity,
+    MidiTarget::VoiceDissonance,
+    MidiTarget::VoiceEnabledToggle,
+    MidiTarget::VoicePitchRangeEvoToggle,
+    MidiTarget::VoiceVolumeEvoToggle,
+    MidiTarget::VoiceTimbreEvoToggle,
+    MidiTarget::VoiceMotionEvoToggle,
+    MidiTarget::VoiceComplexityEvoToggle,
+    MidiTarget::VoiceDissonanceEvoToggle,
+    MidiTarget::SelectVoice1,
+    MidiTarget::SelectVoice2,
+    MidiTarget::SelectVoice3,
+    MidiTarget::SelectVoice4,
+    MidiTarget::TransportPlay,
+    MidiTarget::TransportStop,
+    MidiTarget::TransportReset,
+    MidiTarget::TransportRandomize,
+    MidiTarget::EvolutionAmount,
+    MidiTarget::EvolutionSpeed,
+    MidiTarget::ReverbRoom,
+    MidiTarget::ReverbDecay,
     MidiTarget::MasterVolume,
 };
 
@@ -51,17 +86,27 @@ inline constexpr std::array<MidiTarget, 16> kAllMidiTargets{
 // UI and by MidiPresetStore's (de)serialization.
 inline const char* midiTargetName(MidiTarget target) {
     switch (target) {
-        case MidiTarget::VoiceVolume: return "VoiceVolume";
         case MidiTarget::VoicePitchCenter: return "VoicePitchCenter";
+        case MidiTarget::VoiceVolume: return "VoiceVolume";
         case MidiTarget::VoiceTimbre: return "VoiceTimbre";
         case MidiTarget::VoiceMotion: return "VoiceMotion";
         case MidiTarget::VoiceComplexity: return "VoiceComplexity";
         case MidiTarget::VoiceDissonance: return "VoiceDissonance";
         case MidiTarget::VoiceEnabledToggle: return "VoiceEnabledToggle";
+        case MidiTarget::VoicePitchRangeEvoToggle: return "VoicePitchRangeEvoToggle";
+        case MidiTarget::VoiceVolumeEvoToggle: return "VoiceVolumeEvoToggle";
+        case MidiTarget::VoiceTimbreEvoToggle: return "VoiceTimbreEvoToggle";
+        case MidiTarget::VoiceMotionEvoToggle: return "VoiceMotionEvoToggle";
+        case MidiTarget::VoiceComplexityEvoToggle: return "VoiceComplexityEvoToggle";
+        case MidiTarget::VoiceDissonanceEvoToggle: return "VoiceDissonanceEvoToggle";
         case MidiTarget::SelectVoice1: return "SelectVoice1";
         case MidiTarget::SelectVoice2: return "SelectVoice2";
         case MidiTarget::SelectVoice3: return "SelectVoice3";
         case MidiTarget::SelectVoice4: return "SelectVoice4";
+        case MidiTarget::TransportPlay: return "TransportPlay";
+        case MidiTarget::TransportStop: return "TransportStop";
+        case MidiTarget::TransportReset: return "TransportReset";
+        case MidiTarget::TransportRandomize: return "TransportRandomize";
         case MidiTarget::EvolutionAmount: return "EvolutionAmount";
         case MidiTarget::EvolutionSpeed: return "EvolutionSpeed";
         case MidiTarget::ReverbRoom: return "ReverbRoom";
@@ -98,6 +143,10 @@ struct MidiBinding {
 
     bool matches(const MidiEvent& event) const {
         return type == event.type && channel == event.channel && number == event.number;
+    }
+
+    bool operator==(const MidiBinding& other) const {
+        return type == other.type && channel == other.channel && number == other.number;
     }
 };
 
@@ -187,6 +236,20 @@ public:
             binding.reset();
         }
         learning_ = false;
+    }
+
+    // Whether this manager's binding table matches another's — used by
+    // PresetControls to tell whether the live bindings still match a
+    // selected preset (not dirty) or a saved preset happens to match the
+    // live state (so it should auto-select). Ignores learn-mode state,
+    // which isn't part of what a preset captures.
+    bool equals(const MidiBindingManager& other) const {
+        for (const auto target : kAllMidiTargets) {
+            if (getBinding(target) != other.getBinding(target)) {
+                return false;
+            }
+        }
+        return true;
     }
 
 private:

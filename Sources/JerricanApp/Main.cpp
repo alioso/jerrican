@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
+#include <vector>
 
 #include "EvolutionEngine.h"
 #include "FastRandom.h"
@@ -13,6 +15,8 @@
 #include "JerricanTheme.h"
 #include "MidiBindingManager.h"
 #include "MidiPresetStore.h"
+#include "ScenePresetStore.h"
+#include "SceneState.h"
 #include "VoiceModel.h"
 
 // Content shown in the help popup (launched from the "?" button next to
@@ -151,6 +155,10 @@ public:
         subtitleLabel.setJustificationType(juce::Justification::centredLeft);
         subtitleLabel.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
 
+        addAndMakeVisible(scenesButton);
+        scenesButton.setButtonText("Scenes");
+        scenesButton.onClick = [this] { showScenesPopup(); };
+
         addAndMakeVisible(bindingsButton);
         bindingsButton.setButtonText("Bindings");
         bindingsButton.onClick = [this] { showBindingsPopup(); };
@@ -279,6 +287,7 @@ public:
         midiInputLabel.setBounds(getWidth() - 460, 16, 160, 14);
         midiInputDeviceBox.setBounds(getWidth() - 460, 32, 160, 24);
         bindingsButton.setBounds(getWidth() - 548, 32, 80, 24);
+        scenesButton.setBounds(getWidth() - 626, 32, 70, 24);
 
         // Shared bottom baseline: every transport control's bottom edge
         // sits on this line, even though the Evolution knobs are taller
@@ -513,9 +522,17 @@ public:
                 evolution.resyncVolume(value);
                 break;
             case MidiTarget::VoicePitchCenter: {
+                // Remap the knob's full 0..1 throw directly onto the
+                // achievable center range [halfWidth, 1-halfWidth] — a
+                // range's center can never sit closer to an edge than
+                // half its own width, so a naive value-halfWidth offset
+                // (clamped) leaves dead zones at both ends where the
+                // knob keeps turning but the range stops moving. This
+                // way, value=0 reaches the lowest possible center and
+                // value=1 reaches the highest, with nothing left over.
                 const float width = voice.getPitchRangeHigh() - voice.getPitchRangeLow();
-                const float halfWidth = width * 0.5f;
-                const float low = juce::jlimit(0.0f, 1.0f - width, value - halfWidth);
+                const float span = 1.0f - width;
+                const float low = span > 0.0f ? value * span : 0.0f;
                 voice.setPitchRange(low, low + width);
                 evolution.resyncPitchRange(low, low + width);
                 break;
@@ -539,6 +556,49 @@ public:
             case MidiTarget::VoiceEnabledToggle:
                 voice.setEnabled(!voice.isEnabled());
                 break;
+            // Each flips the matching Evolution opt-in/out flag for the
+            // focused voice and, when switching on, resyncs it — the
+            // same logic VoiceRow::buttonClicked's manual toggle click
+            // already applies, just against the focused voice's engine
+            // instead of a fixed one. Only touches EvolutionEngine's
+            // atomics, so — unlike transport — this is safe to apply
+            // directly from the MIDI thread.
+            case MidiTarget::VoicePitchRangeEvoToggle: {
+                const bool on = !evolution.isPitchRangeEnabled();
+                evolution.setPitchRangeEnabled(on);
+                if (on) evolution.resyncPitchRange(voice.getPitchRangeLow(), voice.getPitchRangeHigh());
+                break;
+            }
+            case MidiTarget::VoiceVolumeEvoToggle: {
+                const bool on = !evolution.isVolumeEnabled();
+                evolution.setVolumeEnabled(on);
+                if (on) evolution.resyncVolume(voice.getVolume());
+                break;
+            }
+            case MidiTarget::VoiceTimbreEvoToggle: {
+                const bool on = !evolution.isTimbreEnabled();
+                evolution.setTimbreEnabled(on);
+                if (on) evolution.resyncTimbre(voice.getTimbre());
+                break;
+            }
+            case MidiTarget::VoiceMotionEvoToggle: {
+                const bool on = !evolution.isMotionEnabled();
+                evolution.setMotionEnabled(on);
+                if (on) evolution.resyncMotion(voice.getMotion());
+                break;
+            }
+            case MidiTarget::VoiceComplexityEvoToggle: {
+                const bool on = !evolution.isComplexityEnabled();
+                evolution.setComplexityEnabled(on);
+                if (on) evolution.resyncComplexity(voice.getComplexity());
+                break;
+            }
+            case MidiTarget::VoiceDissonanceEvoToggle: {
+                const bool on = !evolution.isDissonanceEnabled();
+                evolution.setDissonanceEnabled(on);
+                if (on) evolution.resyncDissonance(voice.getDissonance());
+                break;
+            }
             case MidiTarget::SelectVoice1:
                 focusedVoiceIndex_.store(0, std::memory_order_relaxed);
                 break;
@@ -551,6 +611,43 @@ public:
             case MidiTarget::SelectVoice4:
                 focusedVoiceIndex_.store(3, std::memory_order_relaxed);
                 break;
+            // Transport is the one exception to "just touch atomics" —
+            // handling a press means touching JUCE Components
+            // (playButton/stopButton/statusLabel, and Reset/Randomize's
+            // slider refreshes), which are only safe on the message
+            // thread. Dispatch there via callAsync, guarded by a
+            // SafePointer so a message still in flight when the app
+            // quits becomes a no-op instead of touching a freed
+            // JerricanEditor (same pattern used for the Save-As dialog
+            // in MidiBindingsPopup).
+            case MidiTarget::TransportPlay: {
+                juce::Component::SafePointer<JerricanEditor> safeThis(this);
+                juce::MessageManager::callAsync([safeThis] {
+                    if (safeThis != nullptr) safeThis->handlePlayPressed();
+                });
+                break;
+            }
+            case MidiTarget::TransportStop: {
+                juce::Component::SafePointer<JerricanEditor> safeThis(this);
+                juce::MessageManager::callAsync([safeThis] {
+                    if (safeThis != nullptr) safeThis->handleStopPressed();
+                });
+                break;
+            }
+            case MidiTarget::TransportReset: {
+                juce::Component::SafePointer<JerricanEditor> safeThis(this);
+                juce::MessageManager::callAsync([safeThis] {
+                    if (safeThis != nullptr) safeThis->handleResetPressed();
+                });
+                break;
+            }
+            case MidiTarget::TransportRandomize: {
+                juce::Component::SafePointer<JerricanEditor> safeThis(this);
+                juce::MessageManager::callAsync([safeThis] {
+                    if (safeThis != nullptr) safeThis->handleRandomizePressed();
+                });
+                break;
+            }
             case MidiTarget::EvolutionAmount:
                 evolutionAmount_.store(value, std::memory_order_relaxed);
                 break;
@@ -571,9 +668,94 @@ public:
 
     void showBindingsPopup() {
         auto content = std::make_unique<MidiBindingsPopup>(this);
-        content->setSize(420, 640);
+        content->setSize(440, 720);
         juce::CallOutBox::launchAsynchronously(std::move(content), bindingsButton.getScreenBounds(),
                                                nullptr);
+    }
+
+    void showScenesPopup() {
+        auto content = std::make_unique<ScenesPopup>(this);
+        content->setSize(400, 140);
+        juce::CallOutBox::launchAsynchronously(std::move(content), scenesButton.getScreenBounds(),
+                                               nullptr);
+    }
+
+    // Reads every control's current value — everything a Scene captures,
+    // deliberately excluding transport run/stop state (isPlaying_).
+    SceneState captureSceneState() const {
+        SceneState scene;
+        for (std::size_t i = 0; i < voices_.size(); ++i) {
+            const auto& voice = voices_[i];
+            const auto& evolution = evolutionEngines_[i];
+            auto& voiceScene = scene.voices[i];
+            voiceScene.enabled = voice.isEnabled();
+            voiceScene.volume = voice.getVolume();
+            voiceScene.pitchLow = voice.getPitchRangeLow();
+            voiceScene.pitchHigh = voice.getPitchRangeHigh();
+            voiceScene.timbre = voice.getTimbre();
+            voiceScene.motion = voice.getMotion();
+            voiceScene.complexity = voice.getComplexity();
+            voiceScene.dissonance = voice.getDissonance();
+            voiceScene.volumeEvoEnabled = evolution.isVolumeEnabled();
+            voiceScene.pitchRangeEvoEnabled = evolution.isPitchRangeEnabled();
+            voiceScene.timbreEvoEnabled = evolution.isTimbreEnabled();
+            voiceScene.motionEvoEnabled = evolution.isMotionEnabled();
+            voiceScene.complexityEvoEnabled = evolution.isComplexityEnabled();
+            voiceScene.dissonanceEvoEnabled = evolution.isDissonanceEnabled();
+        }
+        scene.evolutionAmount = evolutionAmount_.load(std::memory_order_relaxed);
+        scene.evolutionSpeed = evolutionSpeed_.load(std::memory_order_relaxed);
+        scene.reverbRoom = reverbRoom_.load(std::memory_order_relaxed);
+        scene.reverbDecay = reverbDecay_.load(std::memory_order_relaxed);
+        scene.masterVolume = masterVolume_.load(std::memory_order_relaxed);
+        return scene;
+    }
+
+    // Writes a full snapshot back — only ever called from the message
+    // thread (the Scenes popup's UI), same as Randomize, so no threading
+    // concerns despite touching Components (via refreshFromModel()/
+    // refreshEvolutionToggles()) as well as atomics. Transport run/stop
+    // state is untouched, matching what a Scene does and doesn't capture.
+    void applySceneState(const SceneState& scene) {
+        for (std::size_t i = 0; i < voices_.size(); ++i) {
+            const auto& voiceScene = scene.voices[i];
+            voices_[i].setEnabled(voiceScene.enabled);
+            voices_[i].setVolume(voiceScene.volume);
+            voices_[i].setPitchRange(voiceScene.pitchLow, voiceScene.pitchHigh);
+            voices_[i].setTimbre(voiceScene.timbre);
+            voices_[i].setMotion(voiceScene.motion);
+            voices_[i].setComplexity(voiceScene.complexity);
+            voices_[i].setDissonance(voiceScene.dissonance);
+
+            const float center = (voiceScene.pitchLow + voiceScene.pitchHigh) * 0.5f;
+            const float width = voiceScene.pitchHigh - voiceScene.pitchLow;
+            evolutionEngines_[i].resetTo(center, width, voiceScene.volume, voiceScene.timbre,
+                                         voiceScene.motion, voiceScene.complexity,
+                                         voiceScene.dissonance);
+            evolutionEngines_[i].setVolumeEnabled(voiceScene.volumeEvoEnabled);
+            evolutionEngines_[i].setPitchRangeEnabled(voiceScene.pitchRangeEvoEnabled);
+            evolutionEngines_[i].setTimbreEnabled(voiceScene.timbreEvoEnabled);
+            evolutionEngines_[i].setMotionEnabled(voiceScene.motionEvoEnabled);
+            evolutionEngines_[i].setComplexityEnabled(voiceScene.complexityEvoEnabled);
+            evolutionEngines_[i].setDissonanceEnabled(voiceScene.dissonanceEvoEnabled);
+
+            voiceRows_[i]->refreshFromModel();
+            voiceRows_[i]->refreshEvolutionToggles();
+        }
+
+        evolutionAmount_.store(scene.evolutionAmount, std::memory_order_relaxed);
+        evolutionSpeed_.store(scene.evolutionSpeed, std::memory_order_relaxed);
+        reverbRoom_.store(scene.reverbRoom, std::memory_order_relaxed);
+        reverbDecay_.store(scene.reverbDecay, std::memory_order_relaxed);
+        masterVolume_.store(scene.masterVolume, std::memory_order_relaxed);
+
+        refreshGlobalKnobFromAtomic(evolutionAmountSlider, evolutionAmount_);
+        refreshGlobalKnobFromAtomic(evolutionSpeedSlider, evolutionSpeed_);
+        refreshGlobalKnobFromAtomic(roomSlider, reverbRoom_);
+        refreshGlobalKnobFromAtomic(decaySlider, reverbDecay_);
+        refreshGlobalKnobFromAtomic(masterVolumeSlider, masterVolume_);
+
+        updateStatusSummary();
     }
 
     void prepareToPlay(int /*samplesPerBlockExpected*/, double sampleRate) override {
@@ -957,6 +1139,27 @@ private:
             evolutionEngineRef_.setDissonanceEnabled(true);
         }
 
+        // Reflects EvolutionEngine's current opt-in/out flags into the six
+        // toggle LEDs, without touching the values they control — the
+        // counterpart to refreshFromModel() above, needed now that MIDI
+        // Learn can flip these flags from off-screen (a manual click
+        // already updates its own toggle directly, so this is purely for
+        // externally-driven changes). Order matches evolutionToggles().
+        void refreshEvolutionToggles() {
+            volumeEvoToggle_.setToggleState(evolutionEngineRef_.isVolumeEnabled(),
+                                            juce::dontSendNotification);
+            pitchRangeEvoToggle_.setToggleState(evolutionEngineRef_.isPitchRangeEnabled(),
+                                                juce::dontSendNotification);
+            timbreEvoToggle_.setToggleState(evolutionEngineRef_.isTimbreEnabled(),
+                                            juce::dontSendNotification);
+            motionEvoToggle_.setToggleState(evolutionEngineRef_.isMotionEnabled(),
+                                            juce::dontSendNotification);
+            complexityEvoToggle_.setToggleState(evolutionEngineRef_.isComplexityEnabled(),
+                                                juce::dontSendNotification);
+            dissonanceEvoToggle_.setToggleState(evolutionEngineRef_.isDissonanceEnabled(),
+                                                juce::dontSendNotification);
+        }
+
     private:
         static constexpr int kEvolutionToggleCount = 6;
         static constexpr const char* kEvolutionCaptions[kEvolutionToggleCount] = {
@@ -1053,6 +1256,253 @@ private:
         juce::ToggleButton dissonanceEvoToggle_;
     };
 
+    // Shared preset combo/Save-As/Delete/Override control, used by both
+    // ScenesPopup and MidiBindingsPopup so the two behave identically —
+    // driven entirely by callbacks rather than templated on the
+    // underlying data type, since MidiBindingManager/MidiPresetStore and
+    // SceneState/ScenePresetStore have nothing in common beyond "named,
+    // save/load/list/remove, comparable for equality".
+    //
+    // State machine (re-run continuously on a timer, and right after any
+    // load/save/delete, so it stays correct no matter how live state
+    // changes underneath it — manual edits, Randomize, MIDI input):
+    //  - Combo has a name selected: if live state still matches what's
+    //    saved under that name, show Save As + Delete. If it no longer
+    //    matches (dirty), also show "Override "{name}"" to write the
+    //    live state back under the same name without a prompt.
+    //  - Combo is blank: scan every saved name for one that matches live
+    //    state and auto-select it if found (this is the "select it if it
+    //    matches" behavior, re-checked every tick rather than once).
+    //    Still blank after that: Save As is only enabled if there's
+    //    something meaningful to save; Delete stays disabled (nothing to
+    //    delete).
+    class PresetControls : public juce::Component, private juce::Timer {
+    public:
+        struct Callbacks {
+            std::function<std::vector<std::string>()> listNames;
+            std::function<bool(const std::string&)> loadNamed;
+            std::function<bool(const std::string&)> saveNamed;
+            std::function<bool(const std::string&)> removeNamed;
+            std::function<bool(const std::string&)> matchesNamed;
+            std::function<bool()> hasMeaningfulContent;
+        };
+
+        static constexpr int kPreferredHeight = 22 + 6 + 22;
+
+        PresetControls(const juce::String& labelText, Callbacks callbacks)
+            : callbacks_(std::move(callbacks)) {
+            addAndMakeVisible(label_);
+            label_.setText(labelText, juce::dontSendNotification);
+            label_.setFont(juce::Font(juce::FontOptions(12.0f)));
+            label_.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
+
+            addAndMakeVisible(combo_);
+            combo_.onChange = [this] {
+                const auto name = combo_.getText();
+                if (name.isNotEmpty()) {
+                    callbacks_.loadNamed(name.toStdString());
+                }
+                refreshState();
+            };
+
+            addAndMakeVisible(overrideButton_);
+            overrideButton_.setVisible(false);
+            overrideButton_.onClick = [this] {
+                const auto name = combo_.getText();
+                if (name.isNotEmpty()) {
+                    callbacks_.saveNamed(name.toStdString());
+                    refreshState();
+                }
+            };
+
+            addAndMakeVisible(saveAsButton_);
+            saveAsButton_.setButtonText("Save As...");
+            saveAsButton_.onClick = [this] { showSaveAsPrompt(); };
+
+            addAndMakeVisible(deleteButton_);
+            deleteButton_.setButtonText("Delete");
+            deleteButton_.onClick = [this] {
+                const auto name = combo_.getText();
+                if (name.isNotEmpty()) {
+                    callbacks_.removeNamed(name.toStdString());
+                    combo_.setText("", juce::dontSendNotification);
+                    refreshNames();
+                    refreshState();
+                }
+            };
+
+            refreshNames();
+            refreshState();
+            startTimerHz(10);
+        }
+
+        void resized() override {
+            const int width = getWidth();
+            label_.setBounds(0, 0, 50, 22);
+            combo_.setBounds(54, 0, width - 54, 22);
+
+            constexpr int buttonHeight = 22;
+            constexpr int buttonGap = 6;
+            constexpr int saveAsWidth = 90;
+            constexpr int deleteWidth = 70;
+            const int row2Y = 22 + 6;
+
+            int rightX = width;
+            deleteButton_.setBounds(rightX - deleteWidth, row2Y, deleteWidth, buttonHeight);
+            rightX -= deleteWidth + buttonGap;
+            saveAsButton_.setBounds(rightX - saveAsWidth, row2Y, saveAsWidth, buttonHeight);
+            rightX -= saveAsWidth + buttonGap;
+
+            if (overrideButton_.isVisible()) {
+                overrideButton_.setBounds(0, row2Y, std::max(0, rightX - buttonGap), buttonHeight);
+            }
+        }
+
+    private:
+        void refreshNames() {
+            const auto currentText = combo_.getText();
+            combo_.clear(juce::dontSendNotification);
+            const auto names = callbacks_.listNames();
+            for (int i = 0; i < static_cast<int>(names.size()); ++i) {
+                combo_.addItem(names[static_cast<std::size_t>(i)], i + 1);
+            }
+            combo_.setText(currentText, juce::dontSendNotification);
+        }
+
+        void refreshState() {
+            auto currentName = combo_.getText();
+
+            if (currentName.isEmpty()) {
+                for (const auto& name : callbacks_.listNames()) {
+                    if (callbacks_.matchesNamed(name)) {
+                        combo_.setText(name, juce::dontSendNotification);
+                        currentName = name;
+                        break;
+                    }
+                }
+            }
+
+            const bool wasOverrideVisible = overrideButton_.isVisible();
+            if (currentName.isEmpty()) {
+                overrideButton_.setVisible(false);
+                saveAsButton_.setEnabled(callbacks_.hasMeaningfulContent());
+                deleteButton_.setEnabled(false);
+            } else {
+                const bool matches = callbacks_.matchesNamed(currentName.toStdString());
+                overrideButton_.setVisible(!matches);
+                if (!matches) {
+                    overrideButton_.setButtonText("Override \"" + currentName + "\"");
+                }
+                saveAsButton_.setEnabled(true);
+                deleteButton_.setEnabled(true);
+            }
+
+            if (overrideButton_.isVisible() != wasOverrideVisible) {
+                resized();
+            }
+        }
+
+        void showSaveAsPrompt() {
+            auto* window = new juce::AlertWindow("Save Preset", "Name this preset:",
+                                                 juce::MessageBoxIconType::NoIcon);
+            window->addTextEditor("name", combo_.getText(), "");
+            window->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+            window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+            // Same use-after-free guard as everywhere else this popup
+            // pattern is used — the modal can outlive this component if
+            // its hosting CallOutBox gets dismissed first.
+            juce::Component::SafePointer<PresetControls> safeThis(this);
+            window->enterModalState(
+                true,
+                juce::ModalCallbackFunction::create([safeThis, window](int result) {
+                    if (result == 1 && safeThis != nullptr) {
+                        const auto name = window->getTextEditorContents("name");
+                        if (name.isNotEmpty()) {
+                            safeThis->callbacks_.saveNamed(name.toStdString());
+                            safeThis->refreshNames();
+                            safeThis->combo_.setText(name, juce::dontSendNotification);
+                            safeThis->refreshState();
+                        }
+                    }
+                }),
+                true);
+        }
+
+        void timerCallback() override { refreshState(); }
+
+        Callbacks callbacks_;
+        juce::Label label_;
+        juce::ComboBox combo_;
+        juce::TextButton overrideButton_;
+        juce::TextButton saveAsButton_;
+        juce::TextButton deleteButton_;
+    };
+
+    // Scenes popup, opened from the "Scenes" button next to Bindings — a
+    // full state snapshot (every voice's knobs/enabled/Evolution-toggle
+    // state, plus the global Evolution/Reverb/Volume controls), distinct
+    // from MIDI Learn's controller-mapping presets. Just a preset row —
+    // no per-control rows, since a Scene captures everything at once.
+    class ScenesPopup : public juce::Component {
+    public:
+        explicit ScenesPopup(JerricanEditor* owner)
+            : presetControls_(
+                  "Scene",
+                  PresetControls::Callbacks{
+                      .listNames = [owner] { return owner->scenePresetStore_.listPresetNames(); },
+                      .loadNamed =
+                          [owner](const std::string& name) {
+                              SceneState scene;
+                              if (!owner->scenePresetStore_.load(name, scene)) {
+                                  return false;
+                              }
+                              owner->applySceneState(scene);
+                              return true;
+                          },
+                      .saveNamed =
+                          [owner](const std::string& name) {
+                              return owner->scenePresetStore_.save(name, owner->captureSceneState());
+                          },
+                      .removeNamed = [owner](const std::string& name) {
+                          return owner->scenePresetStore_.remove(name);
+                      },
+                      .matchesNamed =
+                          [owner](const std::string& name) {
+                              SceneState scene;
+                              return owner->scenePresetStore_.load(name, scene) &&
+                                     scene == owner->captureSceneState();
+                          },
+                      // A Scene is always a complete, meaningful snapshot
+                      // — unlike an empty MIDI binding table, there's no
+                      // "nothing to save" state, so Save As is never
+                      // gated off here.
+                      .hasMeaningfulContent = [] { return true; },
+                  }) {
+            addAndMakeVisible(presetControls_);
+
+            addAndMakeVisible(hintLabel_);
+            hintLabel_.setText("Captures every knob/toggle. Transport state isn't included.",
+                               juce::dontSendNotification);
+            hintLabel_.setFont(juce::Font(juce::FontOptions(11.0f)));
+            hintLabel_.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
+            hintLabel_.setJustificationType(juce::Justification::topLeft);
+        }
+
+        void resized() override {
+            constexpr int padding = 12;
+            const int contentWidth = getWidth() - padding * 2;
+
+            presetControls_.setBounds(padding, padding, contentWidth, PresetControls::kPreferredHeight);
+            hintLabel_.setBounds(padding, padding + PresetControls::kPreferredHeight + 10, contentWidth,
+                                 40);
+        }
+
+    private:
+        PresetControls presetControls_;
+        juce::Label hintLabel_;
+    };
+
     // MIDI Learn popup, opened from the "Bindings" button next to the MIDI
     // input dropdown. One row per MidiTarget (label, live binding readout,
     // Learn, Clear), grouped exactly per the confirmed scope: per-voice
@@ -1066,55 +1516,79 @@ private:
     // mid-learn (CallOutBox content is inherently ephemeral).
     class MidiBindingsPopup : public juce::Component, private juce::Timer {
     public:
-        explicit MidiBindingsPopup(JerricanEditor* owner) : owner_(owner) {
-            addAndMakeVisible(presetLabel_);
-            presetLabel_.setText("Preset", juce::dontSendNotification);
-            presetLabel_.setFont(juce::Font(juce::FontOptions(12.0f)));
-            presetLabel_.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
+        explicit MidiBindingsPopup(JerricanEditor* owner)
+            : owner_(owner),
+              presetControls_(
+                  "Preset",
+                  PresetControls::Callbacks{
+                      .listNames = [owner] { return owner->midiPresetStore_.listPresetNames(); },
+                      .loadNamed =
+                          [owner](const std::string& name) {
+                              return owner->midiPresetStore_.load(name, owner->midiBindings_);
+                          },
+                      .saveNamed =
+                          [owner](const std::string& name) {
+                              return owner->midiPresetStore_.save(name, owner->midiBindings_);
+                          },
+                      .removeNamed = [owner](const std::string& name) {
+                          return owner->midiPresetStore_.remove(name);
+                      },
+                      .matchesNamed =
+                          [owner](const std::string& name) {
+                              MidiBindingManager temp;
+                              return owner->midiPresetStore_.load(name, temp) &&
+                                     temp.equals(owner->midiBindings_);
+                          },
+                      .hasMeaningfulContent =
+                          [owner] {
+                              for (const auto target : kAllMidiTargets) {
+                                  if (owner->midiBindings_.getBinding(target).has_value()) {
+                                      return true;
+                                  }
+                              }
+                              return false;
+                          },
+                  }) {
+            addAndMakeVisible(presetControls_);
 
-            addAndMakeVisible(presetCombo_);
-            refreshPresetList();
-            presetCombo_.onChange = [this] {
-                const auto name = presetCombo_.getText();
-                if (name.isNotEmpty()) {
-                    owner_->midiPresetStore_.load(name.toStdString(), owner_->midiBindings_);
-                }
-            };
+            addAndMakeVisible(midiWarningLabel_);
+            midiWarningLabel_.setText(
+                "No MIDI controller connected " +
+                    juce::String(juce::CharPointer_UTF8("\xe2\x80\x94")) + " pick one from MIDI In.",
+                juce::dontSendNotification);
+            midiWarningLabel_.setFont(juce::Font(juce::FontOptions(11.0f)));
+            midiWarningLabel_.setColour(juce::Label::textColourId, JerricanTheme::accentDeep);
+            midiWarningLabel_.setVisible(owner_->currentMidiInputId_.isEmpty());
 
-            addAndMakeVisible(saveAsButton_);
-            saveAsButton_.setButtonText("Save As...");
-            saveAsButton_.onClick = [this] { showSaveAsPrompt(); };
-
-            addAndMakeVisible(deleteButton_);
-            deleteButton_.setButtonText("Delete");
-            deleteButton_.onClick = [this] {
-                const auto name = presetCombo_.getText();
-                if (name.isNotEmpty()) {
-                    owner_->midiPresetStore_.remove(name.toStdString());
-                    refreshPresetList();
-                }
-            };
+            // 26 target rows no longer reliably fit a fixed popup height
+            // on smaller screens — everything below the preset row lives
+            // in rowsContainer_, scrolled via viewport_, so the preset
+            // row (always relevant) stays pinned at the top regardless.
+            addAndMakeVisible(viewport_);
+            viewport_.setViewedComponent(&rowsContainer_, false);
+            viewport_.setScrollBarsShown(true, false);
 
             setUpSectionLabel(perVoiceSectionLabel_, "Per-Voice Controls (focused voice)");
             setUpSectionLabel(voiceSelectSectionLabel_, "Voice Select");
+            setUpSectionLabel(transportSectionLabel_, "Transport");
             setUpSectionLabel(globalSectionLabel_, "Global");
 
             for (std::size_t i = 0; i < kTargetCount; ++i) {
                 const auto target = kAllMidiTargets[i];
-                addAndMakeVisible(targetLabels_[i]);
+                rowsContainer_.addAndMakeVisible(targetLabels_[i]);
                 targetLabels_[i].setText(friendlyTargetLabel(target), juce::dontSendNotification);
                 targetLabels_[i].setFont(juce::Font(juce::FontOptions(12.0f)));
                 targetLabels_[i].setColour(juce::Label::textColourId, JerricanTheme::textPrimary);
 
-                addAndMakeVisible(targetReadouts_[i]);
+                rowsContainer_.addAndMakeVisible(targetReadouts_[i]);
                 targetReadouts_[i].setFont(juce::Font(juce::FontOptions(11.0f)));
                 targetReadouts_[i].setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
 
-                addAndMakeVisible(learnButtons_[i]);
+                rowsContainer_.addAndMakeVisible(learnButtons_[i]);
                 learnButtons_[i].setButtonText("Learn");
                 learnButtons_[i].onClick = [this, target] { owner_->midiBindings_.armLearn(target); };
 
-                addAndMakeVisible(clearButtons_[i]);
+                rowsContainer_.addAndMakeVisible(clearButtons_[i]);
                 clearButtons_[i].setButtonText("Clear");
                 clearButtons_[i].onClick = [this, target] {
                     owner_->midiBindings_.clearBinding(target);
@@ -1128,17 +1602,28 @@ private:
         void resized() override {
             constexpr int padding = 12;
             const int contentWidth = getWidth() - padding * 2;
+
+            presetControls_.setBounds(padding, padding, contentWidth, PresetControls::kPreferredHeight);
+            int viewportTop = padding + PresetControls::kPreferredHeight + 10;
+
+            if (midiWarningLabel_.isVisible()) {
+                midiWarningLabel_.setBounds(padding, viewportTop, contentWidth, 18);
+                viewportTop += 18 + 8;
+            }
+
+            viewport_.setBounds(0, viewportTop, getWidth(), getHeight() - viewportTop);
+
+            // rowsContainer_ is sized to its actual content height (which
+            // can exceed the popup's own height) — that's what makes
+            // viewport_ scroll instead of clipping.
+            const int rowsContentWidth = getWidth() - viewport_.getScrollBarThickness();
+            const int innerContentWidth = rowsContentWidth - padding * 2;
             int y = padding;
-
-            presetLabel_.setBounds(padding, y, 60, 22);
-            presetCombo_.setBounds(padding + 60, y, contentWidth - 60 - 170, 22);
-            saveAsButton_.setBounds(getWidth() - padding - 170, y, 90, 22);
-            deleteButton_.setBounds(getWidth() - padding - 76, y, 76, 22);
-            y += 22 + 14;
-
-            y = layoutSection(perVoiceSectionLabel_, 0, 7, padding, contentWidth, y);
-            y = layoutSection(voiceSelectSectionLabel_, 7, 11, padding, contentWidth, y);
-            layoutSection(globalSectionLabel_, 11, 16, padding, contentWidth, y);
+            y = layoutSection(perVoiceSectionLabel_, 0, 13, padding, innerContentWidth, y);
+            y = layoutSection(voiceSelectSectionLabel_, 13, 17, padding, innerContentWidth, y);
+            y = layoutSection(transportSectionLabel_, 17, 21, padding, innerContentWidth, y);
+            y = layoutSection(globalSectionLabel_, 21, 26, padding, innerContentWidth, y);
+            rowsContainer_.setSize(rowsContentWidth, y + padding);
         }
 
     private:
@@ -1160,48 +1645,10 @@ private:
         }
 
         void setUpSectionLabel(juce::Label& label, const char* text) {
-            addAndMakeVisible(label);
+            rowsContainer_.addAndMakeVisible(label);
             label.setText(text, juce::dontSendNotification);
             label.setFont(juce::Font(juce::FontOptions(12.0f)).withStyle(juce::Font::bold));
             label.setColour(juce::Label::textColourId, JerricanTheme::evolutionAccent);
-        }
-
-        void refreshPresetList() {
-            const auto currentText = presetCombo_.getText();
-            presetCombo_.clear(juce::dontSendNotification);
-            const auto names = owner_->midiPresetStore_.listPresetNames();
-            for (int i = 0; i < static_cast<int>(names.size()); ++i) {
-                presetCombo_.addItem(names[static_cast<std::size_t>(i)], i + 1);
-            }
-            presetCombo_.setText(currentText, juce::dontSendNotification);
-        }
-
-        void showSaveAsPrompt() {
-            auto* window = new juce::AlertWindow("Save Preset", "Name this binding preset:",
-                                                 juce::MessageBoxIconType::NoIcon);
-            window->addTextEditor("name", presetCombo_.getText(), "");
-            window->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
-            window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-
-            // The modal can outlive this popup (e.g. the CallOutBox hosting
-            // it gets dismissed while "Save Preset" is still open) — a
-            // SafePointer turns that into a no-op instead of a
-            // use-after-free when the callback eventually fires.
-            juce::Component::SafePointer<MidiBindingsPopup> safeThis(this);
-            window->enterModalState(
-                true,
-                juce::ModalCallbackFunction::create([safeThis, window](int result) {
-                    if (result == 1 && safeThis != nullptr) {
-                        const auto name = window->getTextEditorContents("name");
-                        if (name.isNotEmpty()) {
-                            safeThis->owner_->midiPresetStore_.save(name.toStdString(),
-                                                                    safeThis->owner_->midiBindings_);
-                            safeThis->refreshPresetList();
-                            safeThis->presetCombo_.setText(name, juce::dontSendNotification);
-                        }
-                    }
-                }),
-                true);
         }
 
         void refreshReadouts() {
@@ -1216,7 +1663,14 @@ private:
             }
         }
 
-        void timerCallback() override { refreshReadouts(); }
+        void timerCallback() override {
+            refreshReadouts();
+            const bool shouldWarn = owner_->currentMidiInputId_.isEmpty();
+            if (shouldWarn != midiWarningLabel_.isVisible()) {
+                midiWarningLabel_.setVisible(shouldWarn);
+                resized();
+            }
+        }
 
         static juce::String describeBinding(std::optional<MidiBinding> binding) {
             if (!binding.has_value()) {
@@ -1228,17 +1682,27 @@ private:
 
         static const char* friendlyTargetLabel(MidiTarget target) {
             switch (target) {
-                case MidiTarget::VoiceVolume: return "Volume";
                 case MidiTarget::VoicePitchCenter: return "Pitch Range";
+                case MidiTarget::VoiceVolume: return "Volume";
                 case MidiTarget::VoiceTimbre: return "Timbre";
                 case MidiTarget::VoiceMotion: return "Motion";
                 case MidiTarget::VoiceComplexity: return "Complexity";
                 case MidiTarget::VoiceDissonance: return "Dissonance";
                 case MidiTarget::VoiceEnabledToggle: return "Enabled toggle";
+                case MidiTarget::VoicePitchRangeEvoToggle: return "Evolve: Pitch Range";
+                case MidiTarget::VoiceVolumeEvoToggle: return "Evolve: Volume";
+                case MidiTarget::VoiceTimbreEvoToggle: return "Evolve: Timbre";
+                case MidiTarget::VoiceMotionEvoToggle: return "Evolve: Motion";
+                case MidiTarget::VoiceComplexityEvoToggle: return "Evolve: Complexity";
+                case MidiTarget::VoiceDissonanceEvoToggle: return "Evolve: Dissonance";
                 case MidiTarget::SelectVoice1: return "Voice 1";
                 case MidiTarget::SelectVoice2: return "Voice 2";
                 case MidiTarget::SelectVoice3: return "Voice 3";
                 case MidiTarget::SelectVoice4: return "Voice 4";
+                case MidiTarget::TransportPlay: return "Play";
+                case MidiTarget::TransportStop: return "Stop";
+                case MidiTarget::TransportReset: return "Reset";
+                case MidiTarget::TransportRandomize: return "Randomize";
                 case MidiTarget::EvolutionAmount: return "Evolution Amount";
                 case MidiTarget::EvolutionSpeed: return "Evolution Speed";
                 case MidiTarget::ReverbRoom: return "Reverb Room";
@@ -1249,12 +1713,13 @@ private:
         }
 
         JerricanEditor* owner_;
-        juce::Label presetLabel_;
-        juce::ComboBox presetCombo_;
-        juce::TextButton saveAsButton_;
-        juce::TextButton deleteButton_;
+        PresetControls presetControls_;
+        juce::Label midiWarningLabel_;
+        juce::Viewport viewport_;
+        juce::Component rowsContainer_;
         juce::Label perVoiceSectionLabel_;
         juce::Label voiceSelectSectionLabel_;
+        juce::Label transportSectionLabel_;
         juce::Label globalSectionLabel_;
         std::array<juce::Label, kTargetCount> targetLabels_;
         std::array<juce::Label, kTargetCount> targetReadouts_;
@@ -1264,60 +1729,84 @@ private:
 
     void buttonClicked(juce::Button* button) override {
         if (button == &playButton) {
-            isPlaying_.store(true, std::memory_order_relaxed);
-            // Play stays enabled and just switches to its "active" colour —
-            // greying it out read as broken/unclickable rather than "running".
-            playButton.setToggleState(true, juce::dontSendNotification);
-            stopButton.setEnabled(true);
-            statusLabel.setText("Transport running", juce::dontSendNotification);
+            handlePlayPressed();
         } else if (button == &stopButton) {
-            // Just halts new grain spawning — existing grains ring out on
-            // their own, and every knob stays exactly where it was, so
-            // pressing Play again picks up right where you left off.
-            isPlaying_.store(false, std::memory_order_relaxed);
-            playButton.setToggleState(false, juce::dontSendNotification);
-            stopButton.setEnabled(false);
-            statusLabel.setText("Transport stopped", juce::dontSendNotification);
+            handleStopPressed();
         } else if (button == &resetButton) {
-            // Explicitly snaps every voice back to its starting values —
-            // separate from Stop, since that used to happen together and
-            // made Stop feel like it was yanking the controls out from
-            // under you.
-            resetVoicesToInitialState();
-            statusLabel.setText("Voices reset to defaults", juce::dontSendNotification);
+            handleResetPressed();
         } else if (button == &randomizeButton) {
-            // A hard reroll of every lever, regardless of transport or
-            // Evolution state — not a subtle nudge. Must also reset each
-            // EvolutionEngine's internal target, otherwise (when Evolution
-            // > 0) its next tick would immediately smooth the freshly
-            // randomized values back toward its own stale pre-randomize
-            // target, silently undoing this.
-            for (size_t i = 0; i < voices_.size(); ++i) {
-                const float a = randomizeRandom_.nextFloat01();
-                const float b = randomizeRandom_.nextFloat01();
-                const float low = std::min(a, b);
-                const float high = std::max(a, b);
-                const float timbre = randomizeRandom_.nextFloat01();
-                const float motion = randomizeRandom_.nextFloat01();
-                const float complexity = randomizeRandom_.nextFloat01();
-                const float volume = randomizeRandom_.nextFloat01();
-                const float dissonance = randomizeRandom_.nextFloat01();
+            handleRandomizePressed();
+        }
+    }
 
-                voices_[i].setPitchRange(low, high);
-                voices_[i].setTimbre(timbre);
-                voices_[i].setMotion(motion);
-                voices_[i].setComplexity(complexity);
-                voices_[i].setVolume(volume);
-                voices_[i].setDissonance(dissonance);
+    // The four transport actions, factored out of buttonClicked so
+    // applyMidiTarget's MIDI-bound Play/Stop/Reset/Randomize (dispatched
+    // via callAsync onto this, the message thread — see applyMidiTarget)
+    // can call the exact same logic a mouse click does, rather than
+    // duplicating it.
+    void handlePlayPressed() {
+        isPlaying_.store(true, std::memory_order_relaxed);
+        // Play stays enabled and just switches to its "active" colour —
+        // greying it out read as broken/unclickable rather than "running".
+        playButton.setToggleState(true, juce::dontSendNotification);
+        stopButton.setEnabled(true);
+        statusLabel.setText("Transport running", juce::dontSendNotification);
+        updateStatusSummary();
+    }
 
-                const float center = (low + high) * 0.5f;
-                const float width = high - low;
-                evolutionEngines_[i].resetTo(center, width, volume, timbre, motion, complexity,
-                                              dissonance);
-                grainClouds_[i].rerollDrift(low, high);
+    void handleStopPressed() {
+        // Just halts new grain spawning — existing grains ring out on
+        // their own, and every knob stays exactly where it was, so
+        // pressing Play again picks up right where you left off.
+        isPlaying_.store(false, std::memory_order_relaxed);
+        playButton.setToggleState(false, juce::dontSendNotification);
+        stopButton.setEnabled(false);
+        statusLabel.setText("Transport stopped", juce::dontSendNotification);
+        updateStatusSummary();
+    }
 
-                voiceRows_[i]->refreshFromModel();
-            }
+    void handleResetPressed() {
+        // Explicitly snaps every voice back to its starting values —
+        // separate from Stop, since that used to happen together and
+        // made Stop feel like it was yanking the controls out from
+        // under you.
+        resetVoicesToInitialState();
+        statusLabel.setText("Voices reset to defaults", juce::dontSendNotification);
+        updateStatusSummary();
+    }
+
+    void handleRandomizePressed() {
+        // A hard reroll of every lever, regardless of transport or
+        // Evolution state — not a subtle nudge. Must also reset each
+        // EvolutionEngine's internal target, otherwise (when Evolution
+        // > 0) its next tick would immediately smooth the freshly
+        // randomized values back toward its own stale pre-randomize
+        // target, silently undoing this.
+        for (size_t i = 0; i < voices_.size(); ++i) {
+            const float a = randomizeRandom_.nextFloat01();
+            const float b = randomizeRandom_.nextFloat01();
+            const float low = std::min(a, b);
+            const float high = std::max(a, b);
+            const float timbre = randomizeRandom_.nextFloat01();
+            const float motion = randomizeRandom_.nextFloat01();
+            const float complexity = randomizeRandom_.nextFloat01();
+            const float volume = randomizeRandom_.nextFloat01();
+            const float dissonance = randomizeRandom_.nextFloat01();
+
+            voices_[i].setPitchRange(low, high);
+            voices_[i].setTimbre(timbre);
+            voices_[i].setMotion(motion);
+            voices_[i].setComplexity(complexity);
+            voices_[i].setVolume(volume);
+            voices_[i].setDissonance(dissonance);
+
+            const float center = (low + high) * 0.5f;
+            const float width = high - low;
+            evolutionEngines_[i].resetTo(center, width, volume, timbre, motion, complexity,
+                                          dissonance);
+            grainClouds_[i].rerollDrift(low, high);
+
+            voiceRows_[i]->refreshFromModel();
         }
 
         updateStatusSummary();
@@ -1349,6 +1838,7 @@ private:
         const int focused = focusedVoiceIndex_.load(std::memory_order_relaxed);
         for (size_t i = 0; i < voiceRows_.size(); ++i) {
             voiceRows_[i]->refreshFromModel();
+            voiceRows_[i]->refreshEvolutionToggles();
             voiceRows_[i]->setFocused(static_cast<int>(i) == focused);
         }
 
@@ -1407,6 +1897,7 @@ private:
     juce::Label titleLabel;
     juce::Label subtitleLabel;
     juce::TextButton helpButton;
+    juce::TextButton scenesButton;
     juce::TextButton bindingsButton;
     juce::Label midiInputLabel;
     juce::ComboBox midiInputDeviceBox;
@@ -1443,6 +1934,12 @@ private:
         juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
             .getChildFile("Jerrican")
             .getChildFile("MidiPresets")
+            .getFullPathName()
+            .toStdString()};
+    ScenePresetStore scenePresetStore_{
+        juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+            .getChildFile("Jerrican")
+            .getChildFile("Scenes")
             .getFullPathName()
             .toStdString()};
     juce::Reverb reverb_;
