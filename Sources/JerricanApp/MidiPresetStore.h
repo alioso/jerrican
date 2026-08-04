@@ -37,6 +37,10 @@ public:
     }
 
     bool save(const std::string& name, const MidiBindingManager& manager) const {
+        if (!isValidPresetName(name)) {
+            return false;
+        }
+
         std::error_code errorCode;
         std::filesystem::create_directories(directory_, errorCode);
 
@@ -58,6 +62,10 @@ public:
     }
 
     bool load(const std::string& name, MidiBindingManager& manager) const {
+        if (!isValidPresetName(name)) {
+            return false;
+        }
+
         std::ifstream file(pathFor(name));
         if (!file.is_open()) {
             return false;
@@ -72,12 +80,27 @@ public:
     }
 
     bool remove(const std::string& name) const {
+        if (!isValidPresetName(name)) {
+            return false;
+        }
+
         std::error_code errorCode;
         return std::filesystem::remove(pathFor(name), errorCode);
     }
 
 private:
     static constexpr const char* kExtension = ".jbind";
+
+    // Preset names come straight from user text input (the Save As
+    // prompt) and get concatenated into a filesystem path — reject
+    // anything that could escape the presets directory (path separators,
+    // "." / "..") rather than trusting it as a bare filename.
+    static bool isValidPresetName(const std::string& name) {
+        if (name.empty() || name == "." || name == "..") {
+            return false;
+        }
+        return name.find('/') == std::string::npos && name.find('\\') == std::string::npos;
+    }
 
     std::filesystem::path pathFor(const std::string& name) const {
         return directory_ / (name + kExtension);
@@ -102,8 +125,14 @@ private:
 
         MidiBinding binding;
         binding.type = typeToken == "CC" ? MidiEvent::Type::ControlChange : MidiEvent::Type::NoteOn;
-        binding.channel = std::stoi(channelToken);
-        binding.number = std::stoi(numberToken);
+        try {
+            binding.channel = std::stoi(channelToken);
+            binding.number = std::stoi(numberToken);
+        } catch (const std::exception&) {
+            // Malformed line (hand-edited or corrupted preset file) — skip
+            // it rather than letting stoi's exception crash the app.
+            return;
+        }
         manager.setBinding(*target, binding);
     }
 

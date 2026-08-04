@@ -1,5 +1,6 @@
 #include <cassert>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <random>
 #include <string>
@@ -82,6 +83,39 @@ int main() {
     {
         MidiBindingManager manager;
         assert(!store.load("DoesNotExist", manager));
+    }
+
+    // Path-traversal attempts are rejected outright, not resolved outside
+    // the preset directory.
+    {
+        MidiBindingManager manager;
+        const auto outsideFile =
+            std::filesystem::temp_directory_path() / "jerrican_midi_preset_traversal_test.jbind";
+        std::filesystem::remove(outsideFile);
+
+        assert(!store.save("../jerrican_midi_preset_traversal_test", manager));
+        assert(!store.load("../jerrican_midi_preset_traversal_test", manager));
+        assert(!store.remove("../jerrican_midi_preset_traversal_test"));
+        assert(!store.save("nested/name", manager));
+        assert(!store.save("", manager));
+        assert(!store.save(".", manager));
+        assert(!store.save("..", manager));
+        assert(!std::filesystem::exists(outsideFile));
+    }
+
+    // A preset file with a non-numeric channel/number is skipped rather
+    // than crashing the loader.
+    {
+        const auto malformedPath = tempDir / "Malformed.jbind";
+        std::ofstream malformedFile(malformedPath);
+        malformedFile << "VoiceVolume=CC:not-a-number:21\n";
+        malformedFile << "MasterVolume=CC:1:7\n";
+        malformedFile.close();
+
+        MidiBindingManager manager;
+        assert(store.load("Malformed", manager));
+        assert(!manager.getBinding(MidiTarget::VoiceVolume).has_value());
+        assert(manager.getBinding(MidiTarget::MasterVolume).has_value());
     }
 
     std::filesystem::remove_all(tempDir);

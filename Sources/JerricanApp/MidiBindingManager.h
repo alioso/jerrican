@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -106,15 +107,35 @@ struct MidiBinding {
 // decides what to do with it.
 class MidiBindingManager {
 public:
+    // Guards bindings_/learning_/learningTarget_ below. This class is only
+    // ever touched from the MIDI thread (handleEvent, via
+    // JerricanEditor::handleIncomingMidiMessage) and the UI thread (the
+    // bindings popup's Learn/Clear clicks and its refresh timer) — never
+    // the audio thread — so a plain mutex is the right tool here, unlike
+    // VoiceModel/EvolutionEngine's atomics, which exist specifically to
+    // stay lock-free for the audio thread. Blocking briefly on the MIDI
+    // thread is harmless; MIDI input runs on its own callback thread, not
+    // the realtime audio device thread.
     void armLearn(MidiTarget target) {
+        std::lock_guard<std::mutex> lock(mutex_);
         learning_ = true;
         learningTarget_ = target;
     }
 
-    void cancelLearn() { learning_ = false; }
+    void cancelLearn() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        learning_ = false;
+    }
 
-    bool isLearning() const { return learning_; }
-    MidiTarget learningTarget() const { return learningTarget_; }
+    bool isLearning() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return learning_;
+    }
+
+    MidiTarget learningTarget() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return learningTarget_;
+    }
 
     // While learning: completes the binding for the armed target (stealing
     // it from any other target that held the same physical control, so one
@@ -122,6 +143,8 @@ public:
     // returns nullopt. Otherwise: resolves the event to a bound target, if
     // any.
     std::optional<MidiTarget> handleEvent(const MidiEvent& event) {
+        std::lock_guard<std::mutex> lock(mutex_);
+
         if (learning_) {
             for (auto& binding : bindings_) {
                 if (binding.has_value() && binding->matches(event)) {
@@ -143,17 +166,23 @@ public:
         return std::nullopt;
     }
 
-    void clearBinding(MidiTarget target) { bindings_[indexOf(target)].reset(); }
+    void clearBinding(MidiTarget target) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        bindings_[indexOf(target)].reset();
+    }
 
     std::optional<MidiBinding> getBinding(MidiTarget target) const {
+        std::lock_guard<std::mutex> lock(mutex_);
         return bindings_[indexOf(target)];
     }
 
     void setBinding(MidiTarget target, MidiBinding binding) {
+        std::lock_guard<std::mutex> lock(mutex_);
         bindings_[indexOf(target)] = binding;
     }
 
     void clearAll() {
+        std::lock_guard<std::mutex> lock(mutex_);
         for (auto& binding : bindings_) {
             binding.reset();
         }
@@ -167,6 +196,7 @@ private:
                           std::find(kAllMidiTargets.begin(), kAllMidiTargets.end(), target)));
     }
 
+    mutable std::mutex mutex_;
     std::array<std::optional<MidiBinding>, kAllMidiTargets.size()> bindings_{};
     bool learning_ = false;
     MidiTarget learningTarget_ = MidiTarget::VoiceVolume;

@@ -3,7 +3,11 @@ project(Jerrican LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_OSX_ARCHITECTURES arm64)
+# Universal binary: Apple Silicon + Intel in one build.
+set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
+# Oldest macOS an Intel Mac running this is likely to have; also caps what
+# API/SDK surface we can rely on.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
 
 add_subdirectory(JUCE)
 

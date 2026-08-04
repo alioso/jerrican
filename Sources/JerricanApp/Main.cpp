@@ -1182,15 +1182,22 @@ private:
             window->addTextEditor("name", presetCombo_.getText(), "");
             window->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
             window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+            // The modal can outlive this popup (e.g. the CallOutBox hosting
+            // it gets dismissed while "Save Preset" is still open) — a
+            // SafePointer turns that into a no-op instead of a
+            // use-after-free when the callback eventually fires.
+            juce::Component::SafePointer<MidiBindingsPopup> safeThis(this);
             window->enterModalState(
                 true,
-                juce::ModalCallbackFunction::create([this, window](int result) {
-                    if (result == 1) {
+                juce::ModalCallbackFunction::create([safeThis, window](int result) {
+                    if (result == 1 && safeThis != nullptr) {
                         const auto name = window->getTextEditorContents("name");
                         if (name.isNotEmpty()) {
-                            owner_->midiPresetStore_.save(name.toStdString(), owner_->midiBindings_);
-                            refreshPresetList();
-                            presetCombo_.setText(name, juce::dontSendNotification);
+                            safeThis->owner_->midiPresetStore_.save(name.toStdString(),
+                                                                    safeThis->owner_->midiBindings_);
+                            safeThis->refreshPresetList();
+                            safeThis->presetCombo_.setText(name, juce::dontSendNotification);
                         }
                     }
                 }),
