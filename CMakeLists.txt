@@ -77,6 +77,24 @@ target_include_directories(HarmonicScaleTests
         ${CMAKE_CURRENT_SOURCE_DIR}/Sources/JerricanApp
 )
 
+add_executable(MidiBindingManagerTests
+    Tests/MidiBindingManagerTest.cpp
+)
+
+target_include_directories(MidiBindingManagerTests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Sources/JerricanApp
+)
+
+add_executable(MidiPresetStoreTests
+    Tests/MidiPresetStoreTest.cpp
+)
+
+target_include_directories(MidiPresetStoreTests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Sources/JerricanApp
+)
+
 target_compile_definitions(JerricanApp
     PRIVATE
         JUCE_WEB_BROWSER=0

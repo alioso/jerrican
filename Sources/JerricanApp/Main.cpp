@@ -11,6 +11,8 @@
 #include "GrainCloud.h"
 #include "JerricanLookAndFeel.h"
 #include "JerricanTheme.h"
+#include "MidiBindingManager.h"
+#include "MidiPresetStore.h"
 #include "VoiceModel.h"
 
 // Content shown in the help popup (launched from the "?" button next to
@@ -63,8 +65,15 @@ public:
             "Room - a global send amount/space size for the whole mix. "
             "Decay - how long the tail rings out. Both are 0 by default "
             "(no reverb, output unchanged) and never evolve on their own.\n\n"
-            "OUTPUT\n"
-            "Chooses which audio device the instrument plays through.\n\n" +
+            "VOLUME\n"
+            "Master output level, applied after everything else. Full by "
+            "default (unchanged output).\n\n"
+            "OUTPUT / MIDI\n"
+            "Output chooses which audio device the instrument plays through. "
+            "MIDI In connects a controller; Bindings opens MIDI Learn, where "
+            "each per-voice control applies to whichever voice is currently "
+            "focused (switch focus with Voice Select pads) - Play/Stop/"
+            "Reset/Randomize are never MIDI-bindable.\n\n" +
             juce::String(juce::CharPointer_UTF8("\xc2\xa9")) +
             " 2026 Alban Bailly. All rights reserved.";
 
@@ -81,7 +90,8 @@ private:
 class JerricanEditor : public juce::AudioAppComponent,
                         private juce::Button::Listener,
                         private juce::Slider::Listener,
-                        private juce::Timer {
+                        private juce::Timer,
+                        private juce::MidiInputCallback {
 public:
     JerricanEditor()
         : voices_{VoiceModel(kInitialVoices[0].name, kInitialVoices[0].enabled,
@@ -141,6 +151,17 @@ public:
         subtitleLabel.setJustificationType(juce::Justification::centredLeft);
         subtitleLabel.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
 
+        addAndMakeVisible(bindingsButton);
+        bindingsButton.setButtonText("Bindings");
+        bindingsButton.onClick = [this] { showBindingsPopup(); };
+
+        addAndMakeVisible(midiInputLabel);
+        midiInputLabel.setText("MIDI In", juce::dontSendNotification);
+        midiInputLabel.setFont(juce::Font(juce::FontOptions(12.0f)));
+        midiInputLabel.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
+
+        addAndMakeVisible(midiInputDeviceBox);
+
         addAndMakeVisible(helpButton);
         helpButton.setButtonText("?");
         helpButton.onClick = [this] { showHelpPopup(); };
@@ -197,6 +218,23 @@ public:
         setUpTransportKnob(decaySlider, decayLabel, "Decay", false);
         decaySlider.setValue(0.0);
 
+        addAndMakeVisible(masterVolumeTitleLabel);
+        masterVolumeTitleLabel.setText("Volume", juce::dontSendNotification);
+        masterVolumeTitleLabel.setFont(juce::Font(juce::FontOptions(13.0f)).withStyle(juce::Font::bold));
+        masterVolumeTitleLabel.setColour(juce::Label::textColourId, JerricanTheme::textPrimary);
+        masterVolumeTitleLabel.setJustificationType(juce::Justification::centred);
+
+        // Default 1.0 (unity) so out-of-the-box output is identical to
+        // before this control existed — same "neutral default" pattern
+        // Reverb used with its 0-default, just inverted since this knob's
+        // neutral position is fully up rather than fully down.
+        // Blank sub-label — with only one knob in this block, the "Volume"
+        // group title above it already names it; repeating it directly
+        // underneath read as redundant (unlike Evolution/Reverb's two
+        // differently-named knobs, which each need their own label).
+        setUpTransportKnob(masterVolumeSlider, masterVolumeLabel, "", false);
+        masterVolumeSlider.setValue(1.0);
+
         addAndMakeVisible(statusLabel);
         statusLabel.setText("Transport idle", juce::dontSendNotification);
         statusLabel.setFont(juce::Font(juce::FontOptions(14.0f)));
@@ -213,10 +251,15 @@ public:
         setAudioChannels(0, 2);
         populateOutputDeviceBox();
         outputDeviceBox.onChange = [this] { outputDeviceSelected(); };
+        populateMidiInputBox();
+        midiInputDeviceBox.onChange = [this] { midiInputDeviceSelected(); };
         startTimerHz(30);
     }
 
     ~JerricanEditor() override {
+        if (currentMidiInputId_.isNotEmpty()) {
+            deviceManager.removeMidiInputDeviceCallback(currentMidiInputId_, this);
+        }
         shutdownAudio();
         setLookAndFeel(nullptr);
     }
@@ -231,6 +274,11 @@ public:
         outputLabel.setBounds(getWidth() - 260, 16, 220, 14);
         helpButton.setBounds(getWidth() - 292, 32, 24, 24);
         outputDeviceBox.setBounds(getWidth() - 260, 32, 220, 24);
+
+        // MIDI cluster sits left of Help/Output, same top-aligned row.
+        midiInputLabel.setBounds(getWidth() - 460, 16, 160, 14);
+        midiInputDeviceBox.setBounds(getWidth() - 460, 32, 160, 24);
+        bindingsButton.setBounds(getWidth() - 548, 32, 80, 24);
 
         // Shared bottom baseline: every transport control's bottom edge
         // sits on this line, even though the Evolution knobs are taller
@@ -259,7 +307,10 @@ public:
         constexpr int knobLabelHeight = 14;
         constexpr int knobTextBoxHeight = 16;
         constexpr int knobColumnWidth = 84;
-        constexpr int evolutionBlockX = 500;
+        // Shifted left from the original 500 to make room for the Volume
+        // block (one knob-column + gap, ~114px) at the right without
+        // pushing the status label further right than before.
+        constexpr int evolutionBlockX = 386;
         constexpr int evolutionBlockWidth = knobColumnWidth * 2;
         constexpr int evolutionTitleHeight = 16;
         constexpr int evolutionTitleGap = 4;
@@ -303,7 +354,18 @@ public:
         decaySlider.setBounds(decayColumnX + (knobColumnWidth - knobSize) / 2, knobBoxTop, knobSize,
                               knobSize + knobTextBoxHeight);
 
-        const int statusX = reverbBlockX + reverbBlockWidth + 30;
+        // Master Volume block: same title-over-knob shape as Evolution and
+        // Reverb, single knob, placed immediately to Reverb's right.
+        const int volumeBlockX = reverbBlockX + reverbBlockWidth + 30;
+        const int volumeBlockWidth = knobColumnWidth;
+
+        masterVolumeTitleLabel.setBounds(volumeBlockX, evolutionTitleTop, volumeBlockWidth,
+                                         evolutionTitleHeight);
+        masterVolumeLabel.setBounds(volumeBlockX, knobLabelTop, volumeBlockWidth, knobLabelHeight);
+        masterVolumeSlider.setBounds(volumeBlockX + (volumeBlockWidth - knobSize) / 2, knobBoxTop,
+                                     knobSize, knobSize + knobTextBoxHeight);
+
+        const int statusX = volumeBlockX + volumeBlockWidth + 30;
         statusLabel.setBounds(statusX, bottomY - 24, getWidth() - statusX - 40, 24);
 
         // 2x2 grid of voice cards, filling the space between the header and
@@ -381,6 +443,139 @@ public:
         deviceManager.setAudioDeviceSetup(setup, true);
     }
 
+    void populateMidiInputBox() {
+        midiInputDeviceBox.clear(juce::dontSendNotification);
+        midiInputDeviceBox.addItem("None", 1);
+
+        const auto devices = juce::MidiInput::getAvailableDevices();
+        for (int i = 0; i < devices.size(); ++i) {
+            midiInputDeviceBox.addItem(devices[i].name, i + 2);
+        }
+        midiInputDeviceBox.setSelectedId(1, juce::dontSendNotification);
+    }
+
+    void midiInputDeviceSelected() {
+        if (currentMidiInputId_.isNotEmpty()) {
+            deviceManager.setMidiInputDeviceEnabled(currentMidiInputId_, false);
+            deviceManager.removeMidiInputDeviceCallback(currentMidiInputId_, this);
+            currentMidiInputId_ = {};
+        }
+
+        const int selectedId = midiInputDeviceBox.getSelectedId();
+        if (selectedId <= 1) {
+            return;  // "None"
+        }
+
+        const auto devices = juce::MidiInput::getAvailableDevices();
+        const int index = selectedId - 2;
+        if (index < 0 || index >= devices.size()) {
+            return;
+        }
+
+        currentMidiInputId_ = devices[index].identifier;
+        deviceManager.setMidiInputDeviceEnabled(currentMidiInputId_, true);
+        deviceManager.addMidiInputDeviceCallback(currentMidiInputId_, this);
+    }
+
+    // Runs on the MIDI thread. Every write below goes through the same
+    // atomic VoiceModel/EvolutionEngine setters already used from the UI
+    // thread (see VoiceRow::sliderValueChanged) — safe under the
+    // lock-free pattern already established throughout this codebase, no
+    // new synchronization needed.
+    void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message) override {
+        std::optional<MidiEvent> event;
+        if (message.isController()) {
+            event = MidiEvent{MidiEvent::Type::ControlChange, message.getChannel(),
+                              message.getControllerNumber(),
+                              static_cast<float>(message.getControllerValue()) / 127.0f};
+        } else if (message.isNoteOn()) {
+            event = MidiEvent{MidiEvent::Type::NoteOn, message.getChannel(),
+                              message.getNoteNumber(),
+                              static_cast<float>(message.getVelocity()) / 127.0f};
+        } else {
+            return;
+        }
+
+        const auto target = midiBindings_.handleEvent(*event);
+        if (target.has_value()) {
+            applyMidiTarget(*target, event->value);
+        }
+    }
+
+    void applyMidiTarget(MidiTarget target, float value) {
+        const int focused = focusedVoiceIndex_.load(std::memory_order_relaxed);
+        auto& voice = voices_[static_cast<size_t>(focused)];
+        auto& evolution = evolutionEngines_[static_cast<size_t>(focused)];
+
+        switch (target) {
+            case MidiTarget::VoiceVolume:
+                voice.setVolume(value);
+                evolution.resyncVolume(value);
+                break;
+            case MidiTarget::VoicePitchCenter: {
+                const float width = voice.getPitchRangeHigh() - voice.getPitchRangeLow();
+                const float halfWidth = width * 0.5f;
+                const float low = juce::jlimit(0.0f, 1.0f - width, value - halfWidth);
+                voice.setPitchRange(low, low + width);
+                evolution.resyncPitchRange(low, low + width);
+                break;
+            }
+            case MidiTarget::VoiceTimbre:
+                voice.setTimbre(value);
+                evolution.resyncTimbre(value);
+                break;
+            case MidiTarget::VoiceMotion:
+                voice.setMotion(value);
+                evolution.resyncMotion(value);
+                break;
+            case MidiTarget::VoiceComplexity:
+                voice.setComplexity(value);
+                evolution.resyncComplexity(value);
+                break;
+            case MidiTarget::VoiceDissonance:
+                voice.setDissonance(value);
+                evolution.resyncDissonance(value);
+                break;
+            case MidiTarget::VoiceEnabledToggle:
+                voice.setEnabled(!voice.isEnabled());
+                break;
+            case MidiTarget::SelectVoice1:
+                focusedVoiceIndex_.store(0, std::memory_order_relaxed);
+                break;
+            case MidiTarget::SelectVoice2:
+                focusedVoiceIndex_.store(1, std::memory_order_relaxed);
+                break;
+            case MidiTarget::SelectVoice3:
+                focusedVoiceIndex_.store(2, std::memory_order_relaxed);
+                break;
+            case MidiTarget::SelectVoice4:
+                focusedVoiceIndex_.store(3, std::memory_order_relaxed);
+                break;
+            case MidiTarget::EvolutionAmount:
+                evolutionAmount_.store(value, std::memory_order_relaxed);
+                break;
+            case MidiTarget::EvolutionSpeed:
+                evolutionSpeed_.store(value, std::memory_order_relaxed);
+                break;
+            case MidiTarget::ReverbRoom:
+                reverbRoom_.store(value, std::memory_order_relaxed);
+                break;
+            case MidiTarget::ReverbDecay:
+                reverbDecay_.store(value, std::memory_order_relaxed);
+                break;
+            case MidiTarget::MasterVolume:
+                masterVolume_.store(value, std::memory_order_relaxed);
+                break;
+        }
+    }
+
+    void showBindingsPopup() {
+        auto content = std::make_unique<MidiBindingsPopup>(this);
+        content->setSize(420, 640);
+        juce::CallOutBox::launchAsynchronously(std::move(content), bindingsButton.getScreenBounds(),
+                                               nullptr);
+    }
+
     void prepareToPlay(int /*samplesPerBlockExpected*/, double sampleRate) override {
         for (auto& cloud : grainClouds_) {
             cloud.setSampleRate(sampleRate);
@@ -402,6 +597,7 @@ public:
         const bool playing = isPlaying_.load(std::memory_order_relaxed);
         const float evolutionAmount = evolutionAmount_.load(std::memory_order_relaxed);
         const float evolutionSpeed = evolutionSpeed_.load(std::memory_order_relaxed);
+        const float masterVolume = masterVolume_.load(std::memory_order_relaxed);
 
         for (int sample = 0; sample < bufferToFill.numSamples; ++sample) {
             float mixedLeft = 0.0f;
@@ -433,10 +629,14 @@ public:
                 mixedRight += voiceSample.right;
             }
 
+            // masterVolume folds in here (pre-reverb) rather than as a
+            // separate post-reverb pass — Reverb is linear for fixed
+            // parameters, so scaling the input scales both the dry and
+            // wet signal together, equivalent to a true output fader.
             constexpr float headroom = 0.5f;
-            left[sample] = mixedLeft * headroom;
+            left[sample] = mixedLeft * headroom * masterVolume;
             if (right != nullptr) {
-                right[sample] = mixedRight * headroom;
+                right[sample] = mixedRight * headroom * masterVolume;
             }
         }
 
@@ -560,11 +760,22 @@ private:
             const auto bounds = getLocalBounds().toFloat();
             g.setColour(JerricanTheme::panel);
             g.fillRoundedRectangle(bounds, 10.0f);
-            g.setColour(JerricanTheme::panelBorder);
-            g.drawRoundedRectangle(bounds.reduced(0.5f), 10.0f, 1.0f);
+            g.setColour(focused_ ? JerricanTheme::accent : JerricanTheme::panelBorder);
+            g.drawRoundedRectangle(bounds.reduced(0.5f), 10.0f, focused_ ? 2.0f : 1.0f);
 
             g.setColour(JerricanTheme::panelBorder);
             g.drawHorizontalLine(dividerY_, 14.0f, static_cast<float>(getWidth() - 14));
+        }
+
+        // Highlights this card when it's the "focused" voice — the one
+        // MIDI-bound per-voice knobs currently drive (see
+        // JerricanEditor::focusedVoiceIndex_). No-op if unchanged, so the
+        // 30Hz timer polling this is cheap.
+        void setFocused(bool focused) {
+            if (focused_ != focused) {
+                focused_ = focused;
+                repaint();
+            }
         }
 
         void resized() override {
@@ -812,6 +1023,7 @@ private:
         EvolutionEngine& evolutionEngineRef_;
         JerricanEditor* owner_;
         int dividerY_ = 0;
+        bool focused_ = false;
         juce::Label nameLabel_;
         juce::Label volumeLabel_;
         juce::Label pitchRangeLabel_;
@@ -839,6 +1051,208 @@ private:
         juce::ToggleButton motionEvoToggle_;
         juce::ToggleButton complexityEvoToggle_;
         juce::ToggleButton dissonanceEvoToggle_;
+    };
+
+    // MIDI Learn popup, opened from the "Bindings" button next to the MIDI
+    // input dropdown. One row per MidiTarget (label, live binding readout,
+    // Learn, Clear), grouped exactly per the confirmed scope: per-voice
+    // controls (apply to whichever voice is currently focused), voice
+    // select (moves focus), and global controls. A preset row at the top
+    // saves/loads/deletes named binding sets — explicit Save only, nothing
+    // is written to disk until "Save As..." is clicked. Runs its own
+    // lightweight Timer to poll owner_->midiBindings_ and keep every row's
+    // readout current, including while a Learn is in flight — avoids
+    // needing callback plumbing that could dangle if this popup closes
+    // mid-learn (CallOutBox content is inherently ephemeral).
+    class MidiBindingsPopup : public juce::Component, private juce::Timer {
+    public:
+        explicit MidiBindingsPopup(JerricanEditor* owner) : owner_(owner) {
+            addAndMakeVisible(presetLabel_);
+            presetLabel_.setText("Preset", juce::dontSendNotification);
+            presetLabel_.setFont(juce::Font(juce::FontOptions(12.0f)));
+            presetLabel_.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
+
+            addAndMakeVisible(presetCombo_);
+            refreshPresetList();
+            presetCombo_.onChange = [this] {
+                const auto name = presetCombo_.getText();
+                if (name.isNotEmpty()) {
+                    owner_->midiPresetStore_.load(name.toStdString(), owner_->midiBindings_);
+                }
+            };
+
+            addAndMakeVisible(saveAsButton_);
+            saveAsButton_.setButtonText("Save As...");
+            saveAsButton_.onClick = [this] { showSaveAsPrompt(); };
+
+            addAndMakeVisible(deleteButton_);
+            deleteButton_.setButtonText("Delete");
+            deleteButton_.onClick = [this] {
+                const auto name = presetCombo_.getText();
+                if (name.isNotEmpty()) {
+                    owner_->midiPresetStore_.remove(name.toStdString());
+                    refreshPresetList();
+                }
+            };
+
+            setUpSectionLabel(perVoiceSectionLabel_, "Per-Voice Controls (focused voice)");
+            setUpSectionLabel(voiceSelectSectionLabel_, "Voice Select");
+            setUpSectionLabel(globalSectionLabel_, "Global");
+
+            for (std::size_t i = 0; i < kTargetCount; ++i) {
+                const auto target = kAllMidiTargets[i];
+                addAndMakeVisible(targetLabels_[i]);
+                targetLabels_[i].setText(friendlyTargetLabel(target), juce::dontSendNotification);
+                targetLabels_[i].setFont(juce::Font(juce::FontOptions(12.0f)));
+                targetLabels_[i].setColour(juce::Label::textColourId, JerricanTheme::textPrimary);
+
+                addAndMakeVisible(targetReadouts_[i]);
+                targetReadouts_[i].setFont(juce::Font(juce::FontOptions(11.0f)));
+                targetReadouts_[i].setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
+
+                addAndMakeVisible(learnButtons_[i]);
+                learnButtons_[i].setButtonText("Learn");
+                learnButtons_[i].onClick = [this, target] { owner_->midiBindings_.armLearn(target); };
+
+                addAndMakeVisible(clearButtons_[i]);
+                clearButtons_[i].setButtonText("Clear");
+                clearButtons_[i].onClick = [this, target] {
+                    owner_->midiBindings_.clearBinding(target);
+                };
+            }
+
+            refreshReadouts();
+            startTimerHz(10);
+        }
+
+        void resized() override {
+            constexpr int padding = 12;
+            const int contentWidth = getWidth() - padding * 2;
+            int y = padding;
+
+            presetLabel_.setBounds(padding, y, 60, 22);
+            presetCombo_.setBounds(padding + 60, y, contentWidth - 60 - 170, 22);
+            saveAsButton_.setBounds(getWidth() - padding - 170, y, 90, 22);
+            deleteButton_.setBounds(getWidth() - padding - 76, y, 76, 22);
+            y += 22 + 14;
+
+            y = layoutSection(perVoiceSectionLabel_, 0, 7, padding, contentWidth, y);
+            y = layoutSection(voiceSelectSectionLabel_, 7, 11, padding, contentWidth, y);
+            layoutSection(globalSectionLabel_, 11, 16, padding, contentWidth, y);
+        }
+
+    private:
+        static constexpr std::size_t kTargetCount = kAllMidiTargets.size();
+
+        int layoutSection(juce::Label& sectionLabel, std::size_t begin, std::size_t end, int padding,
+                          int contentWidth, int y) {
+            sectionLabel.setBounds(padding, y, contentWidth, 16);
+            y += 16 + 4;
+
+            for (std::size_t i = begin; i < end; ++i) {
+                targetLabels_[i].setBounds(padding, y, 150, 22);
+                targetReadouts_[i].setBounds(padding + 150, y, 130, 22);
+                learnButtons_[i].setBounds(padding + 150 + 130 + 4, y, 60, 22);
+                clearButtons_[i].setBounds(padding + 150 + 130 + 4 + 64, y, 56, 22);
+                y += 22;
+            }
+            return y + 12;
+        }
+
+        void setUpSectionLabel(juce::Label& label, const char* text) {
+            addAndMakeVisible(label);
+            label.setText(text, juce::dontSendNotification);
+            label.setFont(juce::Font(juce::FontOptions(12.0f)).withStyle(juce::Font::bold));
+            label.setColour(juce::Label::textColourId, JerricanTheme::evolutionAccent);
+        }
+
+        void refreshPresetList() {
+            const auto currentText = presetCombo_.getText();
+            presetCombo_.clear(juce::dontSendNotification);
+            const auto names = owner_->midiPresetStore_.listPresetNames();
+            for (int i = 0; i < static_cast<int>(names.size()); ++i) {
+                presetCombo_.addItem(names[static_cast<std::size_t>(i)], i + 1);
+            }
+            presetCombo_.setText(currentText, juce::dontSendNotification);
+        }
+
+        void showSaveAsPrompt() {
+            auto* window = new juce::AlertWindow("Save Preset", "Name this binding preset:",
+                                                 juce::MessageBoxIconType::NoIcon);
+            window->addTextEditor("name", presetCombo_.getText(), "");
+            window->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+            window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+            window->enterModalState(
+                true,
+                juce::ModalCallbackFunction::create([this, window](int result) {
+                    if (result == 1) {
+                        const auto name = window->getTextEditorContents("name");
+                        if (name.isNotEmpty()) {
+                            owner_->midiPresetStore_.save(name.toStdString(), owner_->midiBindings_);
+                            refreshPresetList();
+                            presetCombo_.setText(name, juce::dontSendNotification);
+                        }
+                    }
+                }),
+                true);
+        }
+
+        void refreshReadouts() {
+            for (std::size_t i = 0; i < kTargetCount; ++i) {
+                const auto target = kAllMidiTargets[i];
+                if (owner_->midiBindings_.isLearning() && owner_->midiBindings_.learningTarget() == target) {
+                    targetReadouts_[i].setText("Listening...", juce::dontSendNotification);
+                    continue;
+                }
+                targetReadouts_[i].setText(describeBinding(owner_->midiBindings_.getBinding(target)),
+                                           juce::dontSendNotification);
+            }
+        }
+
+        void timerCallback() override { refreshReadouts(); }
+
+        static juce::String describeBinding(std::optional<MidiBinding> binding) {
+            if (!binding.has_value()) {
+                return "Not bound";
+            }
+            const juce::String kind = binding->type == MidiEvent::Type::ControlChange ? "CC" : "Note";
+            return kind + " " + juce::String(binding->number) + " ch" + juce::String(binding->channel);
+        }
+
+        static const char* friendlyTargetLabel(MidiTarget target) {
+            switch (target) {
+                case MidiTarget::VoiceVolume: return "Volume";
+                case MidiTarget::VoicePitchCenter: return "Pitch Range";
+                case MidiTarget::VoiceTimbre: return "Timbre";
+                case MidiTarget::VoiceMotion: return "Motion";
+                case MidiTarget::VoiceComplexity: return "Complexity";
+                case MidiTarget::VoiceDissonance: return "Dissonance";
+                case MidiTarget::VoiceEnabledToggle: return "Enabled toggle";
+                case MidiTarget::SelectVoice1: return "Voice 1";
+                case MidiTarget::SelectVoice2: return "Voice 2";
+                case MidiTarget::SelectVoice3: return "Voice 3";
+                case MidiTarget::SelectVoice4: return "Voice 4";
+                case MidiTarget::EvolutionAmount: return "Evolution Amount";
+                case MidiTarget::EvolutionSpeed: return "Evolution Speed";
+                case MidiTarget::ReverbRoom: return "Reverb Room";
+                case MidiTarget::ReverbDecay: return "Reverb Decay";
+                case MidiTarget::MasterVolume: return "Master Volume";
+            }
+            return "";
+        }
+
+        JerricanEditor* owner_;
+        juce::Label presetLabel_;
+        juce::ComboBox presetCombo_;
+        juce::TextButton saveAsButton_;
+        juce::TextButton deleteButton_;
+        juce::Label perVoiceSectionLabel_;
+        juce::Label voiceSelectSectionLabel_;
+        juce::Label globalSectionLabel_;
+        std::array<juce::Label, kTargetCount> targetLabels_;
+        std::array<juce::Label, kTargetCount> targetReadouts_;
+        std::array<juce::TextButton, kTargetCount> learnButtons_;
+        std::array<juce::TextButton, kTargetCount> clearButtons_;
     };
 
     void buttonClicked(juce::Button* button) override {
@@ -913,16 +1327,34 @@ private:
             reverbRoom_.store(static_cast<float>(roomSlider.getValue()), std::memory_order_relaxed);
         } else if (slider == &decaySlider) {
             reverbDecay_.store(static_cast<float>(decaySlider.getValue()), std::memory_order_relaxed);
+        } else if (slider == &masterVolumeSlider) {
+            masterVolume_.store(static_cast<float>(masterVolumeSlider.getValue()),
+                                std::memory_order_relaxed);
         }
     }
 
     void timerCallback() override {
-        if (!isPlaying_.load(std::memory_order_relaxed) ||
-            evolutionAmount_.load(std::memory_order_relaxed) <= 0.0f) {
-            return;
+        // Voice rows, focus highlight, and the global knobs all need to
+        // reflect state regardless of transport/Evolution — MIDI can
+        // change any of it at any time now, not just Evolution while
+        // playing. refreshFromModel()/the drag-guard below already skip
+        // any control the user is actively touching.
+        const int focused = focusedVoiceIndex_.load(std::memory_order_relaxed);
+        for (size_t i = 0; i < voiceRows_.size(); ++i) {
+            voiceRows_[i]->refreshFromModel();
+            voiceRows_[i]->setFocused(static_cast<int>(i) == focused);
         }
-        for (auto& row : voiceRows_) {
-            row->refreshFromModel();
+
+        refreshGlobalKnobFromAtomic(evolutionAmountSlider, evolutionAmount_);
+        refreshGlobalKnobFromAtomic(evolutionSpeedSlider, evolutionSpeed_);
+        refreshGlobalKnobFromAtomic(roomSlider, reverbRoom_);
+        refreshGlobalKnobFromAtomic(decaySlider, reverbDecay_);
+        refreshGlobalKnobFromAtomic(masterVolumeSlider, masterVolume_);
+    }
+
+    static void refreshGlobalKnobFromAtomic(juce::Slider& slider, std::atomic<float>& value) {
+        if (!slider.isMouseButtonDown()) {
+            slider.setValue(value.load(std::memory_order_relaxed), juce::dontSendNotification);
         }
     }
 
@@ -968,6 +1400,10 @@ private:
     juce::Label titleLabel;
     juce::Label subtitleLabel;
     juce::TextButton helpButton;
+    juce::TextButton bindingsButton;
+    juce::Label midiInputLabel;
+    juce::ComboBox midiInputDeviceBox;
+    juce::String currentMidiInputId_;
     juce::Label outputLabel;
     juce::ComboBox outputDeviceBox;
     juce::Label statusLabel;
@@ -985,11 +1421,23 @@ private:
     juce::Slider roomSlider;
     juce::Label decayLabel;
     juce::Slider decaySlider;
+    juce::Label masterVolumeTitleLabel;
+    juce::Label masterVolumeLabel;
+    juce::Slider masterVolumeSlider;
     std::atomic<bool> isPlaying_{false};
     std::atomic<float> evolutionAmount_{0.0f};
     std::atomic<float> evolutionSpeed_{0.5f};
     std::atomic<float> reverbRoom_{0.0f};
     std::atomic<float> reverbDecay_{0.0f};
+    std::atomic<float> masterVolume_{1.0f};
+    std::atomic<int> focusedVoiceIndex_{0};
+    MidiBindingManager midiBindings_;
+    MidiPresetStore midiPresetStore_{
+        juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+            .getChildFile("Jerrican")
+            .getChildFile("MidiPresets")
+            .getFullPathName()
+            .toStdString()};
     juce::Reverb reverb_;
     std::array<VoiceModel, 4> voices_;
     std::array<GrainCloud, 4> grainClouds_;
