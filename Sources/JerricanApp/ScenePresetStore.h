@@ -60,6 +60,7 @@ public:
             file << prefix << "motion=" << voice.motion << "\n";
             file << prefix << "complexity=" << voice.complexity << "\n";
             file << prefix << "dissonance=" << voice.dissonance << "\n";
+            file << prefix << "rootSemitoneOffset=" << voice.rootSemitoneOffset << "\n";
             file << prefix << "volumeEvoEnabled=" << (voice.volumeEvoEnabled ? 1 : 0) << "\n";
             file << prefix << "pitchRangeEvoEnabled=" << (voice.pitchRangeEvoEnabled ? 1 : 0) << "\n";
             file << prefix << "timbreEvoEnabled=" << (voice.timbreEvoEnabled ? 1 : 0) << "\n";
@@ -165,6 +166,7 @@ private:
         else if (field == "motion") voice.motion = value;
         else if (field == "complexity") voice.complexity = value;
         else if (field == "dissonance") voice.dissonance = value;
+        else if (field == "rootSemitoneOffset") voice.rootSemitoneOffset = static_cast<int>(value);
         else if (field == "volumeEvoEnabled") voice.volumeEvoEnabled = boolValue;
         else if (field == "pitchRangeEvoEnabled") voice.pitchRangeEvoEnabled = boolValue;
         else if (field == "timbreEvoEnabled") voice.timbreEvoEnabled = boolValue;

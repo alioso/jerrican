@@ -4,9 +4,12 @@
 #include "VoiceModel.h"
 
 int main() {
-    VoiceModel voice("Voice 1", true, 0.82f, 0.2f, 0.6f, 0.5f, 0.4f, 0.3f, 0.6f);
+    VoiceModel voice("Voice 1", true, 0.82f, 0.2f, 0.6f, 0.5f, 0.4f, 0.3f, 0.6f, 7);
 
     assert(voice.getName() == "Voice 1");
+    assert(voice.getRootSemitoneOffset() == 7);
+    voice.setRootSemitoneOffset(3);
+    assert(voice.getRootSemitoneOffset() == 3);
     assert(voice.isEnabled());
     assert(voice.getVolume() > 0.8f);
     assert(voice.getPitchRangeLow() == 0.2f);

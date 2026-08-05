@@ -47,9 +47,10 @@ public:
 
     Grain::StereoSample renderSample(float pitchRangeLow, float pitchRangeHigh, float timbre,
                                       float motion, float complexity, float volume,
-                                      float dissonance = 1.0f) {
+                                      float dissonance = 1.0f, int rootSemitoneOffset = 0) {
         updateDrift(pitchRangeLow, pitchRangeHigh, motion);
-        maybeSpawnGrain(pitchRangeLow, pitchRangeHigh, timbre, complexity, dissonance);
+        maybeSpawnGrain(pitchRangeLow, pitchRangeHigh, timbre, complexity, dissonance,
+                        rootSemitoneOffset);
 
         float left = 0.0f;
         float right = 0.0f;
@@ -86,7 +87,8 @@ private:
         breathingGain_ += (breathingTarget_ - breathingGain_) * smoothingCoefficient;
     }
 
-    void maybeSpawnGrain(float low, float high, float timbre, float complexity, float dissonance) {
+    void maybeSpawnGrain(float low, float high, float timbre, float complexity, float dissonance,
+                         int rootSemitoneOffset) {
         const float grainsPerSecond = std::max(0.0f, complexity) * maxGrainsPerSecond;
         const float spawnProbabilityPerSample = grainsPerSecond / static_cast<float>(sampleRate_);
         if (random_.nextFloat01() >= spawnProbabilityPerSample) {
@@ -103,10 +105,12 @@ private:
             const float hi = std::max(low, std::min(high, driftCenter_ + spread));
             const float rawPitch = random_.nextFloatRange(std::min(lo, hi), std::max(lo, hi));
 
-            // Dissonance 0 = fully quantized to the shared consonant scale
-            // (so voices harmonize with each other), 1 = fully free/
-            // continuous like before this macro existed.
-            const float quantizedPitch = HarmonicScale::quantize(rawPitch);
+            // Dissonance 0 = fully quantized to this voice's (rooted)
+            // consonant scale, 1 = fully free/continuous like before this
+            // macro existed. rootSemitoneOffset lets different voices
+            // quantize to different degrees of the same scale shape,
+            // rather than only ever landing on identical pitch classes.
+            const float quantizedPitch = HarmonicScale::quantize(rawPitch, rootSemitoneOffset);
             const float pitch = quantizedPitch + (rawPitch - quantizedPitch) * dissonance;
 
             const float durationMs = random_.nextFloatRange(minGrainDurationMs_, maxGrainDurationMs_);

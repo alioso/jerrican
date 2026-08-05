@@ -3,27 +3,43 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 
-// Quantizes a normalized pitch (0..1) to the nearest degree of a fixed,
-// deliberately safe/consonant scale: A major pentatonic, rooted at the
-// same A that pitch 0.0 already maps to in VoiceOscillator's 55Hz-880Hz
-// (exactly 4-octave) mapping. Shared by every voice — not user-facing —
-// so that at low Dissonance, independently-drawn pitches across different
-// voices still land on notes that harmonize with each other, rather than
-// each voice merely being consonant with itself.
+// Quantizes a normalized pitch (0..1) to the nearest degree of a
+// deliberately safe/consonant scale: major pentatonic, rooted by default
+// at the same A that pitch 0.0 already maps to in VoiceOscillator's
+// 55Hz-880Hz (exactly 4-octave) mapping — shifted by rootSemitoneOffset
+// (0=A, 1=A#, ... 11=G#) for callers that want a different per-voice
+// key. At the same root (the default, 0), independently-drawn pitches
+// across different voices still land on notes that harmonize with each
+// other; giving each voice its own root instead lets them harmonize
+// deliberately, as different degrees of a chord, rather than only ever
+// landing on identical pitch classes.
 class HarmonicScale {
 public:
-    static float quantize(float normalizedPitch) {
+    static float quantize(float normalizedPitch, int rootSemitoneOffset = 0) {
         const float semitone =
             std::max(0.0f, std::min(1.0f, normalizedPitch)) * semitonesPerRange;
 
-        float best = candidateSemitones.front();
-        float bestDistance = std::abs(semitone - best);
+        float best = 0.0f;
+        float bestDistance = std::numeric_limits<float>::max();
         for (float candidate : candidateSemitones) {
-            const float distance = std::abs(semitone - candidate);
+            // Shift each candidate by the root, then fold anything that
+            // lands outside the 4-octave range back in by one octave —
+            // the pentatonic pattern repeats every 12 semitones, so this
+            // keeps the shifted set covering the same [0, 48] span
+            // rather than spilling off one edge.
+            float shifted = candidate + static_cast<float>(rootSemitoneOffset);
+            if (shifted > semitonesPerRange) {
+                shifted -= 12.0f;
+            } else if (shifted < 0.0f) {
+                shifted += 12.0f;
+            }
+
+            const float distance = std::abs(semitone - shifted);
             if (distance < bestDistance) {
                 bestDistance = distance;
-                best = candidate;
+                best = shifted;
             }
         }
 

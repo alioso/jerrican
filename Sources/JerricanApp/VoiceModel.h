@@ -12,9 +12,14 @@
 // between them).
 class VoiceModel {
 public:
+    // rootSemitoneOffset (0=A .. 11=G#) transposes this voice's Dissonance
+    // quantization target (see HarmonicScale) — unlike every other field
+    // here, it's a compositional/identity choice, not a generative macro:
+    // never touched by EvolutionEngine or Randomize, only set here and via
+    // the per-voice Key control.
     VoiceModel(std::string name, bool enabled, float volume, float pitchRangeLow,
                float pitchRangeHigh, float timbre, float motion, float complexity,
-               float dissonance)
+               float dissonance, int rootSemitoneOffset = 0)
         : name_(std::move(name)),
           enabled_(enabled),
           volume_(clamp01(volume)),
@@ -23,7 +28,8 @@ public:
           timbre_(clamp01(timbre)),
           motion_(clamp01(motion)),
           complexity_(clamp01(complexity)),
-          dissonance_(clamp01(dissonance)) {}
+          dissonance_(clamp01(dissonance)),
+          rootSemitoneOffset_(rootSemitoneOffset) {}
 
     const std::string& getName() const { return name_; }
     bool isEnabled() const { return enabled_.load(std::memory_order_relaxed); }
@@ -34,6 +40,7 @@ public:
     float getMotion() const { return motion_.load(std::memory_order_relaxed); }
     float getComplexity() const { return complexity_.load(std::memory_order_relaxed); }
     float getDissonance() const { return dissonance_.load(std::memory_order_relaxed); }
+    int getRootSemitoneOffset() const { return rootSemitoneOffset_.load(std::memory_order_relaxed); }
 
     void setEnabled(bool enabled) { enabled_.store(enabled, std::memory_order_relaxed); }
     void setVolume(float volume) { volume_.store(clamp01(volume), std::memory_order_relaxed); }
@@ -52,6 +59,10 @@ public:
     }
     void setDissonance(float dissonance) {
         dissonance_.store(clamp01(dissonance), std::memory_order_relaxed);
+    }
+
+    void setRootSemitoneOffset(int rootSemitoneOffset) {
+        rootSemitoneOffset_.store(rootSemitoneOffset, std::memory_order_relaxed);
     }
 
     std::string getSummary() const {
@@ -75,4 +86,5 @@ private:
     std::atomic<float> motion_;
     std::atomic<float> complexity_;
     std::atomic<float> dissonance_;
+    std::atomic<int> rootSemitoneOffset_;
 };

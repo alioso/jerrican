@@ -60,8 +60,12 @@ public:
             "Timbre - blends grain character, smooth to metallic/textured.\n"
             "Motion - how far the sampling point wanders within Pitch Range.\n"
             "Complexity - how dense the grain cloud is.\n"
-            "Dissonance - 0 quantizes to a shared consonant scale so voices "
-            "harmonize; 1 is fully free/chromatic.\n\n"
+            "Dissonance - 0 quantizes to this voice's scale so it harmonizes "
+            "with others; 1 is fully free/chromatic.\n"
+            "Key - which note that scale is rooted on; give two voices "
+            "different Keys (e.g. a fifth apart) to build a deliberate "
+            "chord at low Dissonance instead of unison. Not affected by "
+            "Evolution or Randomize.\n\n"
             "Each control has its own small Evolution switch (on by default, "
             "teal) - turn one off to keep it under manual control while the "
             "rest keep drifting.\n\n"
@@ -102,22 +106,22 @@ public:
                               kInitialVoices[0].volume, kInitialVoices[0].pitchLow,
                               kInitialVoices[0].pitchHigh, kInitialVoices[0].timbre,
                               kInitialVoices[0].motion, kInitialVoices[0].complexity,
-                              kInitialVoices[0].dissonance),
+                              kInitialVoices[0].dissonance, kInitialVoices[0].rootSemitoneOffset),
                   VoiceModel(kInitialVoices[1].name, kInitialVoices[1].enabled,
                               kInitialVoices[1].volume, kInitialVoices[1].pitchLow,
                               kInitialVoices[1].pitchHigh, kInitialVoices[1].timbre,
                               kInitialVoices[1].motion, kInitialVoices[1].complexity,
-                              kInitialVoices[1].dissonance),
+                              kInitialVoices[1].dissonance, kInitialVoices[1].rootSemitoneOffset),
                   VoiceModel(kInitialVoices[2].name, kInitialVoices[2].enabled,
                               kInitialVoices[2].volume, kInitialVoices[2].pitchLow,
                               kInitialVoices[2].pitchHigh, kInitialVoices[2].timbre,
                               kInitialVoices[2].motion, kInitialVoices[2].complexity,
-                              kInitialVoices[2].dissonance),
+                              kInitialVoices[2].dissonance, kInitialVoices[2].rootSemitoneOffset),
                   VoiceModel(kInitialVoices[3].name, kInitialVoices[3].enabled,
                               kInitialVoices[3].volume, kInitialVoices[3].pitchLow,
                               kInitialVoices[3].pitchHigh, kInitialVoices[3].timbre,
                               kInitialVoices[3].motion, kInitialVoices[3].complexity,
-                              kInitialVoices[3].dissonance)},
+                              kInitialVoices[3].dissonance, kInitialVoices[3].rootSemitoneOffset)},
           grainClouds_{GrainCloud(0x1a2b3c4du, kInitialVoices[0].minGrainDurationMs,
                                    kInitialVoices[0].maxGrainDurationMs, kInitialVoices[0].character),
                        GrainCloud(0x5e6f7081u, kInitialVoices[1].minGrainDurationMs,
@@ -696,6 +700,7 @@ public:
             voiceScene.motion = voice.getMotion();
             voiceScene.complexity = voice.getComplexity();
             voiceScene.dissonance = voice.getDissonance();
+            voiceScene.rootSemitoneOffset = voice.getRootSemitoneOffset();
             voiceScene.volumeEvoEnabled = evolution.isVolumeEnabled();
             voiceScene.pitchRangeEvoEnabled = evolution.isPitchRangeEnabled();
             voiceScene.timbreEvoEnabled = evolution.isTimbreEnabled();
@@ -726,6 +731,7 @@ public:
             voices_[i].setMotion(voiceScene.motion);
             voices_[i].setComplexity(voiceScene.complexity);
             voices_[i].setDissonance(voiceScene.dissonance);
+            voices_[i].setRootSemitoneOffset(voiceScene.rootSemitoneOffset);
 
             const float center = (voiceScene.pitchLow + voiceScene.pitchHigh) * 0.5f;
             const float width = voiceScene.pitchHigh - voiceScene.pitchLow;
@@ -806,7 +812,8 @@ public:
                 const auto voiceSample =
                     cloud.renderSample(voice.getPitchRangeLow(), voice.getPitchRangeHigh(),
                                         voice.getTimbre(), voice.getMotion(), complexity,
-                                        voice.getVolume(), voice.getDissonance());
+                                        voice.getVolume(), voice.getDissonance(),
+                                        voice.getRootSemitoneOffset());
                 mixedLeft += voiceSample.left;
                 mixedRight += voiceSample.right;
             }
@@ -853,6 +860,7 @@ private:
         float motion;
         float complexity;
         float dissonance;
+        int rootSemitoneOffset;
         float minGrainDurationMs;
         float maxGrainDurationMs;
         Grain::Character character;
@@ -874,16 +882,20 @@ private:
     // Character existed — Ambient just names what it already did.
     //
     // Dissonance near 0 for everyone by default: voices quantize mostly to
-    // the shared consonant scale out of the box (see HarmonicScale), so
-    // nothing is constantly dissonant/spooky unless deliberately opened up.
+    // their (rooted) consonant scale out of the box (see HarmonicScale),
+    // so nothing is constantly dissonant/spooky unless deliberately
+    // opened up. Roots default to an A major triad across the four
+    // voices — Drone on the root, Pulse doubling it, Spark on the fifth,
+    // Haze on the third — so the harmony this Key control enables is
+    // audible immediately at Dissonance=0, not just a theoretical option.
     static constexpr std::array<InitialVoice, 4> kInitialVoices{
-        {{"Pulse", true, 0.65f, 0.40f, 0.65f, 0.40f, 0.45f, 0.35f, 0.15f, 200.0f, 500.0f,
+        {{"Pulse", true, 0.65f, 0.40f, 0.65f, 0.40f, 0.45f, 0.35f, 0.15f, 0, 200.0f, 500.0f,
           Grain::Character::Plucked},
-         {"Drone", true, 0.60f, 0.05f, 0.20f, 0.15f, 0.10f, 0.12f, 0.15f, 1500.0f, 4000.0f,
+         {"Drone", true, 0.60f, 0.05f, 0.20f, 0.15f, 0.10f, 0.12f, 0.15f, 0, 1500.0f, 4000.0f,
           Grain::Character::Ambient},
-         {"Spark", true, 0.55f, 0.60f, 0.85f, 0.70f, 0.50f, 0.45f, 0.15f, 150.0f, 400.0f,
+         {"Spark", true, 0.55f, 0.60f, 0.85f, 0.70f, 0.50f, 0.45f, 0.15f, 7, 150.0f, 400.0f,
           Grain::Character::Plucked},
-         {"Haze", true, 0.50f, 0.15f, 0.35f, 0.75f, 0.20f, 0.15f, 0.15f, 2000.0f, 5000.0f,
+         {"Haze", true, 0.50f, 0.15f, 0.35f, 0.75f, 0.20f, 0.15f, 0.15f, 4, 2000.0f, 5000.0f,
           Grain::Character::Ambient}}};
 
     // A self-contained voice "card": name + LED enable indicator, a
@@ -910,6 +922,25 @@ private:
             pitchRangeSlider_.setMinAndMaxValues(voiceRef_.getPitchRangeLow(),
                                                   voiceRef_.getPitchRangeHigh(),
                                                   juce::dontSendNotification);
+
+            // Key: which degree of the (Dissonance-quantized) scale this
+            // voice's pitches gravitate toward — see HarmonicScale. Unlike
+            // every other control here, it's never touched by Evolution or
+            // Randomize; it's a compositional choice, set once and left.
+            addAndMakeVisible(keyLabel_);
+            keyLabel_.setText("Key", juce::dontSendNotification);
+            keyLabel_.setFont(juce::Font(juce::FontOptions(12.0f)));
+            keyLabel_.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
+            keyLabel_.setJustificationType(juce::Justification::centredRight);
+
+            addAndMakeVisible(rootCombo_);
+            for (int i = 0; i < 12; ++i) {
+                rootCombo_.addItem(kNoteNames[i], i + 1);
+            }
+            rootCombo_.setSelectedId(voiceRef_.getRootSemitoneOffset() + 1, juce::dontSendNotification);
+            rootCombo_.onChange = [this] {
+                voiceRef_.setRootSemitoneOffset(rootCombo_.getSelectedId() - 1);
+            };
 
             setUpKnob(volumeSlider_, volumeLabel_, "Volume");
             volumeSlider_.setValue(voiceRef_.getVolume());
@@ -969,6 +1000,13 @@ private:
 
             const int pitchY = padding + 26 + 8;
             pitchRangeLabel_.setBounds(padding, pitchY, 160, 14);
+
+            constexpr int rootComboWidth = 66;
+            constexpr int keyLabelWidth = 28;
+            keyLabel_.setBounds(padding + contentWidth - keyLabelWidth - rootComboWidth - 4, pitchY,
+                                keyLabelWidth, 16);
+            rootCombo_.setBounds(padding + contentWidth - rootComboWidth, pitchY, rootComboWidth, 16);
+
             pitchRangeSlider_.setBounds(padding, pitchY + 16, contentWidth, 22);
 
             const int knobRowY = pitchY + 16 + 22 + 12;
@@ -1123,6 +1161,10 @@ private:
             if (!dissonanceSlider_.isMouseButtonDown()) {
                 dissonanceSlider_.setValue(voiceRef_.getDissonance(), juce::dontSendNotification);
             }
+            if (!rootCombo_.isPopupActive()) {
+                rootCombo_.setSelectedId(voiceRef_.getRootSemitoneOffset() + 1,
+                                         juce::dontSendNotification);
+            }
         }
 
         // Restores all 6 Evolution toggles to their default (on) state —
@@ -1164,6 +1206,8 @@ private:
         static constexpr int kEvolutionToggleCount = 6;
         static constexpr const char* kEvolutionCaptions[kEvolutionToggleCount] = {
             "Volume", "Range", "Timbre", "Motion", "Complexity", "Dissonance"};
+        static constexpr const char* kNoteNames[12] = {"A",  "A#", "B", "C",  "C#", "D",
+                                                        "D#", "E",  "F", "F#", "G",  "G#"};
 
         void setUpLabel(juce::Label& label, const char* labelText) {
             addAndMakeVisible(label);
@@ -1230,6 +1274,8 @@ private:
         juce::Label nameLabel_;
         juce::Label volumeLabel_;
         juce::Label pitchRangeLabel_;
+        juce::Label keyLabel_;
+        juce::ComboBox rootCombo_;
         juce::Label timbreLabel_;
         juce::Label motionLabel_;
         juce::Label complexityLabel_;
@@ -1285,12 +1331,30 @@ private:
             std::function<bool(const std::string&)> removeNamed;
             std::function<bool(const std::string&)> matchesNamed;
             std::function<bool()> hasMeaningfulContent;
+            // Called after a confirmed delete, so the live state doesn't
+            // keep pointing at a preset that no longer exists on disk —
+            // e.g. clearing bindings, or resetting voices to defaults.
+            std::function<void()> onDeleted;
+            // PresetControls itself is rebuilt from scratch every time its
+            // popup reopens (a fresh CallOutBox each click), so "which
+            // preset am I on" can't live only in this Component's combo
+            // box — it has to be persisted by the owner (JerricanEditor)
+            // across opens/closes, otherwise editing a loaded preset and
+            // reopening the popup loses track of it, leaving only the
+            // "Save As" path (no way to Override) even though you're
+            // still clearly working from that preset.
+            std::function<juce::String()> getCurrentName;
+            std::function<void(const juce::String&)> setCurrentName;
         };
 
         static constexpr int kPreferredHeight = 22 + 6 + 22;
 
-        PresetControls(const juce::String& labelText, Callbacks callbacks)
-            : callbacks_(std::move(callbacks)) {
+        // enableRevert: whether to offer a "Revert" button (discards
+        // unsaved edits, reloads the selected preset's saved values) —
+        // Scenes-only per explicit request; Bindings' UI stays as-is.
+        PresetControls(const juce::String& labelText, Callbacks callbacks,
+                       bool enableRevert = false)
+            : callbacks_(std::move(callbacks)), enableRevert_(enableRevert) {
             addAndMakeVisible(label_);
             label_.setText(labelText, juce::dontSendNotification);
             label_.setFont(juce::Font(juce::FontOptions(12.0f)));
@@ -1302,6 +1366,7 @@ private:
                 if (name.isNotEmpty()) {
                     callbacks_.loadNamed(name.toStdString());
                 }
+                callbacks_.setCurrentName(name);
                 refreshState();
             };
 
@@ -1315,22 +1380,29 @@ private:
                 }
             };
 
+            addAndMakeVisible(revertButton_);
+            revertButton_.setButtonText("Revert");
+            revertButton_.setVisible(false);
+            revertButton_.onClick = [this] {
+                const auto name = combo_.getText();
+                if (name.isNotEmpty()) {
+                    callbacks_.loadNamed(name.toStdString());
+                    refreshState();
+                }
+            };
+
             addAndMakeVisible(saveAsButton_);
             saveAsButton_.setButtonText("Save As...");
             saveAsButton_.onClick = [this] { showSaveAsPrompt(); };
 
             addAndMakeVisible(deleteButton_);
             deleteButton_.setButtonText("Delete");
-            deleteButton_.onClick = [this] {
-                const auto name = combo_.getText();
-                if (name.isNotEmpty()) {
-                    callbacks_.removeNamed(name.toStdString());
-                    combo_.setText("", juce::dontSendNotification);
-                    refreshNames();
-                    refreshState();
-                }
-            };
+            deleteButton_.onClick = [this] { showDeleteConfirmPrompt(); };
 
+            // Re-hydrate from whatever preset the owner remembers being
+            // "on", so reopening this popup after editing a loaded preset
+            // still offers Override rather than only Save As.
+            combo_.setText(callbacks_.getCurrentName(), juce::dontSendNotification);
             refreshNames();
             refreshState();
             startTimerHz(10);
@@ -1352,6 +1424,12 @@ private:
             rightX -= deleteWidth + buttonGap;
             saveAsButton_.setBounds(rightX - saveAsWidth, row2Y, saveAsWidth, buttonHeight);
             rightX -= saveAsWidth + buttonGap;
+
+            if (revertButton_.isVisible()) {
+                constexpr int revertWidth = 64;
+                revertButton_.setBounds(rightX - revertWidth, row2Y, revertWidth, buttonHeight);
+                rightX -= revertWidth + buttonGap;
+            }
 
             if (overrideButton_.isVisible()) {
                 overrideButton_.setBounds(0, row2Y, std::max(0, rightX - buttonGap), buttonHeight);
@@ -1377,14 +1455,17 @@ private:
                     if (callbacks_.matchesNamed(name)) {
                         combo_.setText(name, juce::dontSendNotification);
                         currentName = name;
+                        callbacks_.setCurrentName(name);
                         break;
                     }
                 }
             }
 
             const bool wasOverrideVisible = overrideButton_.isVisible();
+            const bool wasRevertVisible = revertButton_.isVisible();
             if (currentName.isEmpty()) {
                 overrideButton_.setVisible(false);
+                revertButton_.setVisible(false);
                 saveAsButton_.setEnabled(callbacks_.hasMeaningfulContent());
                 deleteButton_.setEnabled(false);
             } else {
@@ -1393,11 +1474,16 @@ private:
                 if (!matches) {
                     overrideButton_.setButtonText("Override \"" + currentName + "\"");
                 }
+                // Only worth offering once there's actually something to
+                // discard — if live state already matches the saved
+                // preset, Revert would be a no-op.
+                revertButton_.setVisible(enableRevert_ && !matches);
                 saveAsButton_.setEnabled(true);
                 deleteButton_.setEnabled(true);
             }
 
-            if (overrideButton_.isVisible() != wasOverrideVisible) {
+            if (overrideButton_.isVisible() != wasOverrideVisible ||
+                revertButton_.isVisible() != wasRevertVisible) {
                 resized();
             }
         }
@@ -1416,14 +1502,85 @@ private:
             window->enterModalState(
                 true,
                 juce::ModalCallbackFunction::create([safeThis, window](int result) {
+                    if (result != 1 || safeThis == nullptr) {
+                        return;
+                    }
+                    const auto name = window->getTextEditorContents("name");
+                    if (name.isEmpty()) {
+                        return;
+                    }
+
+                    // Save As is framed as "create a new preset" — silently
+                    // overwriting an existing one because you happened to
+                    // type (or mistype into) a name that already exists
+                    // would be a destructive surprise, so confirm first.
+                    const auto existingNames = safeThis->callbacks_.listNames();
+                    const bool alreadyExists =
+                        std::find(existingNames.begin(), existingNames.end(),
+                                 name.toStdString()) != existingNames.end();
+                    if (alreadyExists) {
+                        safeThis->showOverwriteConfirmPrompt(name);
+                    } else {
+                        safeThis->commitSaveAs(name);
+                    }
+                }),
+                true);
+        }
+
+        void showOverwriteConfirmPrompt(const juce::String& name) {
+            auto* window =
+                new juce::AlertWindow("Overwrite Preset",
+                                      "A preset named \"" + name +
+                                          "\" already exists. Overwrite it?",
+                                      juce::MessageBoxIconType::WarningIcon);
+            window->addButton("Overwrite", 1, juce::KeyPress(juce::KeyPress::returnKey));
+            window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+            juce::Component::SafePointer<PresetControls> safeThis(this);
+            window->enterModalState(
+                true,
+                juce::ModalCallbackFunction::create([safeThis, name](int result) {
                     if (result == 1 && safeThis != nullptr) {
-                        const auto name = window->getTextEditorContents("name");
-                        if (name.isNotEmpty()) {
-                            safeThis->callbacks_.saveNamed(name.toStdString());
-                            safeThis->refreshNames();
-                            safeThis->combo_.setText(name, juce::dontSendNotification);
-                            safeThis->refreshState();
+                        safeThis->commitSaveAs(name);
+                    }
+                }),
+                true);
+        }
+
+        void commitSaveAs(const juce::String& name) {
+            callbacks_.saveNamed(name.toStdString());
+            callbacks_.setCurrentName(name);
+            refreshNames();
+            combo_.setText(name, juce::dontSendNotification);
+            refreshState();
+        }
+
+        void showDeleteConfirmPrompt() {
+            const auto name = combo_.getText();
+            if (name.isEmpty()) {
+                return;
+            }
+
+            auto* window =
+                new juce::AlertWindow("Delete Preset",
+                                      "Are you sure you want to delete \"" + name + "\"?",
+                                      juce::MessageBoxIconType::WarningIcon);
+            window->addButton("Delete", 1, juce::KeyPress(juce::KeyPress::returnKey));
+            window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+            juce::Component::SafePointer<PresetControls> safeThis(this);
+            window->enterModalState(
+                true,
+                juce::ModalCallbackFunction::create([safeThis, name](int result) {
+                    if (result == 1 && safeThis != nullptr) {
+                        safeThis->callbacks_.removeNamed(name.toStdString());
+                        safeThis->combo_.setText("", juce::dontSendNotification);
+                        safeThis->callbacks_.setCurrentName("");
+                        safeThis->refreshNames();
+                        if (safeThis->callbacks_.onDeleted) {
+                            safeThis->callbacks_.onDeleted();
                         }
+                        safeThis->refreshState();
                     }
                 }),
                 true);
@@ -1432,9 +1589,11 @@ private:
         void timerCallback() override { refreshState(); }
 
         Callbacks callbacks_;
+        bool enableRevert_;
         juce::Label label_;
         juce::ComboBox combo_;
         juce::TextButton overrideButton_;
+        juce::TextButton revertButton_;
         juce::TextButton saveAsButton_;
         juce::TextButton deleteButton_;
     };
@@ -1478,7 +1637,16 @@ private:
                       // "nothing to save" state, so Save As is never
                       // gated off here.
                       .hasMeaningfulContent = [] { return true; },
-                  }) {
+                      // Deleting the Scene you're on shouldn't leave live
+                      // state pointing at a preset that no longer exists
+                      // — fall back to the same defaults Reset restores.
+                      .onDeleted = [owner] { owner->handleResetPressed(); },
+                      .getCurrentName = [owner] { return owner->currentSceneName_; },
+                      .setCurrentName = [owner](const juce::String& name) {
+                          owner->currentSceneName_ = name;
+                      },
+                  },
+                  /*enableRevert=*/true) {
             addAndMakeVisible(presetControls_);
 
             addAndMakeVisible(hintLabel_);
@@ -1548,6 +1716,15 @@ private:
                               }
                               return false;
                           },
+                      // Deleting the preset you're on shouldn't leave the
+                      // live bindings pointing at a saved file that no
+                      // longer exists — clear them so it's an honest
+                      // blank slate.
+                      .onDeleted = [owner] { owner->midiBindings_.clearAll(); },
+                      .getCurrentName = [owner] { return owner->currentMidiPresetName_; },
+                      .setCurrentName = [owner](const juce::String& name) {
+                          owner->currentMidiPresetName_ = name;
+                      },
                   }) {
             addAndMakeVisible(presetControls_);
 
@@ -1865,6 +2042,7 @@ private:
             voices_[i].setMotion(initial.motion);
             voices_[i].setComplexity(initial.complexity);
             voices_[i].setDissonance(initial.dissonance);
+            voices_[i].setRootSemitoneOffset(initial.rootSemitoneOffset);
             voiceRows_[i]->refreshFromModel();
             voiceRows_[i]->resetEvolutionToggles();
 
@@ -1929,6 +2107,13 @@ private:
     std::atomic<float> reverbDecay_{0.0f};
     std::atomic<float> masterVolume_{1.0f};
     std::atomic<int> focusedVoiceIndex_{0};
+    // Which preset each popup is "on", persisted here rather than in the
+    // popup itself — MidiBindingsPopup/ScenesPopup are rebuilt from
+    // scratch every time their CallOutBox reopens, so without this,
+    // reopening after editing a loaded preset would lose track of which
+    // one to Override.
+    juce::String currentMidiPresetName_;
+    juce::String currentSceneName_;
     MidiBindingManager midiBindings_;
     MidiPresetStore midiPresetStore_{
         juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)

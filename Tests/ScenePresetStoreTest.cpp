@@ -31,6 +31,7 @@ SceneState makeTestScene() {
         voice.motion = base + 0.5f;
         voice.complexity = base + 0.6f;
         voice.dissonance = base + 0.7f;
+        voice.rootSemitoneOffset = static_cast<int>(i) * 3;
         voice.volumeEvoEnabled = (i % 2 == 0);
         voice.pitchRangeEvoEnabled = (i % 2 != 0);
         voice.timbreEvoEnabled = true;
@@ -58,6 +59,7 @@ void assertScenesEqual(const SceneState& a, const SceneState& b) {
         assert(std::abs(va.motion - vb.motion) < 1e-4f);
         assert(std::abs(va.complexity - vb.complexity) < 1e-4f);
         assert(std::abs(va.dissonance - vb.dissonance) < 1e-4f);
+        assert(va.rootSemitoneOffset == vb.rootSemitoneOffset);
         assert(va.volumeEvoEnabled == vb.volumeEvoEnabled);
         assert(va.pitchRangeEvoEnabled == vb.pitchRangeEvoEnabled);
         assert(va.timbreEvoEnabled == vb.timbreEvoEnabled);
@@ -150,6 +152,11 @@ int main() {
         b.voices[2].pitchRangeEvoEnabled = !b.voices[2].pitchRangeEvoEnabled;
         assert(!(a == b));
         b.voices[2].pitchRangeEvoEnabled = a.voices[2].pitchRangeEvoEnabled;
+        assert(a == b);
+
+        b.voices[1].rootSemitoneOffset += 1;
+        assert(!(a == b));
+        b.voices[1].rootSemitoneOffset = a.voices[1].rootSemitoneOffset;
         assert(a == b);
 
         b.masterVolume += 0.5f;

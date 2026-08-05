@@ -20,6 +20,7 @@ struct VoiceSceneState {
     float motion = 0.0f;
     float complexity = 0.0f;
     float dissonance = 0.0f;
+    int rootSemitoneOffset = 0;
     bool volumeEvoEnabled = true;
     bool pitchRangeEvoEnabled = true;
     bool timbreEvoEnabled = true;
@@ -52,6 +53,7 @@ inline bool operator==(const VoiceSceneState& a, const VoiceSceneState& b) {
            nearlyEqual(a.pitchLow, b.pitchLow) && nearlyEqual(a.pitchHigh, b.pitchHigh) &&
            nearlyEqual(a.timbre, b.timbre) && nearlyEqual(a.motion, b.motion) &&
            nearlyEqual(a.complexity, b.complexity) && nearlyEqual(a.dissonance, b.dissonance) &&
+           a.rootSemitoneOffset == b.rootSemitoneOffset &&
            a.volumeEvoEnabled == b.volumeEvoEnabled &&
            a.pitchRangeEvoEnabled == b.pitchRangeEvoEnabled &&
            a.timbreEvoEnabled == b.timbreEvoEnabled && a.motionEvoEnabled == b.motionEvoEnabled &&
