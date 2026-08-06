@@ -7,6 +7,7 @@
 #include <functional>
 #include <vector>
 
+#include "AudioRecorder.h"
 #include "EvolutionEngine.h"
 #include "FastRandom.h"
 #include "Grain.h"
@@ -159,6 +160,12 @@ public:
         subtitleLabel.setJustificationType(juce::Justification::centredLeft);
         subtitleLabel.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
 
+        addAndMakeVisible(recordButton);
+        recordButton.setButtonText("Record");
+        recordButton.setClickingTogglesState(false);
+        recordButton.onClick = [this] { toggleRecording(); };
+        recordingThread_.startThread();
+
         addAndMakeVisible(scenesButton);
         scenesButton.setButtonText("Scenes");
         scenesButton.onClick = [this] { showScenesPopup(); };
@@ -259,7 +266,7 @@ public:
 
         updateStatus();
 
-        setSize(1180, 900);
+        setSize(1310, 900);
         setAudioChannels(0, 2);
         populateOutputDeviceBox();
         outputDeviceBox.onChange = [this] { outputDeviceSelected(); };
@@ -272,6 +279,8 @@ public:
         if (currentMidiInputId_.isNotEmpty()) {
             deviceManager.removeMidiInputDeviceCallback(currentMidiInputId_, this);
         }
+        recorder_.stop();
+        recordingThread_.stopThread(2000);
         shutdownAudio();
         setLookAndFeel(nullptr);
     }
@@ -292,6 +301,7 @@ public:
         midiInputDeviceBox.setBounds(getWidth() - 460, 32, 160, 24);
         bindingsButton.setBounds(getWidth() - 548, 32, 80, 24);
         scenesButton.setBounds(getWidth() - 626, 32, 70, 24);
+        recordButton.setBounds(getWidth() - 716, 32, 80, 24);
 
         // Shared bottom baseline: every transport control's bottom edge
         // sits on this line, even though the Evolution knobs are taller
@@ -426,6 +436,35 @@ public:
         content->setSize(480, 620);
         juce::CallOutBox::launchAsynchronously(std::move(content), helpButton.getScreenBounds(),
                                                 nullptr);
+    }
+
+    // Toggled from the Record button. No file-save dialog on start — like
+    // an instrument's own record button rather than a DAW export flow, it
+    // starts immediately into a timestamped file under ~/Music, and Stop
+    // finalizes it. Recording state is independent of the transport: you
+    // can record silence (Stop) as easily as a running performance.
+    void toggleRecording() {
+        if (recorder_.isRecording()) {
+            recorder_.stop();
+            recordButton.setToggleState(false, juce::dontSendNotification);
+            statusLabel.setText("Recording saved to " + currentRecordingFile_.getFileName(),
+                                juce::dontSendNotification);
+            return;
+        }
+
+        const auto directory =
+            juce::File::getSpecialLocation(juce::File::userMusicDirectory).getChildFile("Jerrican Recordings");
+        const auto filename =
+            "Jerrican-" + juce::Time::getCurrentTime().formatted("%Y-%m-%d-%H%M%S") + ".wav";
+        currentRecordingFile_ = directory.getChildFile(filename);
+
+        if (recorder_.startRecording(currentRecordingFile_, sampleRate_)) {
+            recordButton.setToggleState(true, juce::dontSendNotification);
+            statusLabel.setText("Recording to " + currentRecordingFile_.getFileName(),
+                                juce::dontSendNotification);
+        } else {
+            statusLabel.setText("Couldn't start recording", juce::dontSendNotification);
+        }
     }
 
     void populateOutputDeviceBox() {
@@ -772,6 +811,7 @@ public:
             engine.setSampleRate(sampleRate);
         }
         reverb_.setSampleRate(sampleRate);
+        sampleRate_ = sampleRate;
     }
 
     void releaseResources() override {}
@@ -847,6 +887,13 @@ public:
             reverb_.setParameters(reverbParams);
             reverb_.processStereo(left, right, bufferToFill.numSamples);
         }
+
+        // Tap the exact signal being sent to the output device — after
+        // every other stage, so a recording matches what's actually
+        // audible. Duplicates left into both channels for mono devices,
+        // since the recorder always writes a stereo file.
+        const float* recordChannels[2] = {left, right != nullptr ? right : left};
+        recorder_.recordBlock(recordChannels, bufferToFill.numSamples);
     }
 
 private:
@@ -2075,6 +2122,11 @@ private:
     juce::Label titleLabel;
     juce::Label subtitleLabel;
     juce::TextButton helpButton;
+    juce::TextButton recordButton;
+    juce::TimeSliceThread recordingThread_{"Jerrican Recording Thread"};
+    AudioRecorder recorder_{recordingThread_};
+    juce::File currentRecordingFile_;
+    double sampleRate_ = 44100.0;
     juce::TextButton scenesButton;
     juce::TextButton bindingsButton;
     juce::Label midiInputLabel;
@@ -2141,7 +2193,7 @@ public:
         setUsingNativeTitleBar(true);
         setContentOwned(new JerricanEditor(), true);
         setResizable(true, true);
-        centreWithSize(1180, 900);
+        centreWithSize(1310, 900);
         setVisible(true);
     }
 
