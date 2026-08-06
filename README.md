@@ -1,3 +1,5 @@
+<img src="Resources/AppIcon.png" width="120" alt="Jerrican icon">
+
 # Jerrican
 
 Jerrican is a macOS-native generative music instrument, built on C++ and
