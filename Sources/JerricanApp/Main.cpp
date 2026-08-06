@@ -81,8 +81,16 @@ public:
             "Output chooses which audio device the instrument plays through. "
             "MIDI In connects a controller; Bindings opens MIDI Learn, where "
             "each per-voice control applies to whichever voice is currently "
-            "focused (switch focus with Voice Select pads) - Play/Stop/"
-            "Reset/Randomize are never MIDI-bindable.\n\n" +
+            "focused (switch focus with Voice Select pads). Transport "
+            "(Play/Stop/Reset/Randomize) is bindable too, as a global "
+            "action rather than a per-voice one.\n\n"
+            "RECORDING\n"
+            "Record captures the exact final mix (everything, post-Reverb) "
+            "to a timestamped WAV under ~/Music/Jerrican Recordings - click "
+            "again to stop and finalize the file. Independent of the "
+            "transport: you can record silence as easily as a running "
+            "performance. \"Open Folder\" reveals the most recent "
+            "recording in Finder.\n\n" +
             juce::String(juce::CharPointer_UTF8("\xc2\xa9")) +
             " 2026 Alban Bailly. All rights reserved.";
 

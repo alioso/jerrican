@@ -38,6 +38,13 @@ piece never plays the same way twice.
   timbre/motion/complexity, safe to read from the real-time audio thread)
 - A voice-bank UI exposing all of the above per voice, plus a transport row
   (Play / Stop-Reset / Randomize)
+- MIDI Learn (per-voice controls apply to whichever voice is currently
+  focused) and Scenes (full-state snapshot presets)
+- Audio export: a Record button captures the exact final mix to a
+  timestamped WAV under `~/Music/Jerrican Recordings`, via a
+  background-threaded writer (`AudioRecorder.h`) so the realtime audio
+  callback never blocks on file I/O; "Open Folder" reveals the last
+  recording in Finder
 - Headless regression tests for the voice model, oscillator, and grain cloud
 
 ## Project structure
@@ -49,6 +56,7 @@ piece never plays the same way twice.
 - [Sources/JerricanApp/VoiceOscillator.h](Sources/JerricanApp/VoiceOscillator.h) — Sine/Saw/FM/Noise waveform generator
 - [Sources/JerricanApp/Grain.h](Sources/JerricanApp/Grain.h) — a single enveloped, panned grain
 - [Sources/JerricanApp/GrainCloud.h](Sources/JerricanApp/GrainCloud.h) — per-voice grain pool, scheduler, and drift
+- [Sources/JerricanApp/AudioRecorder.h](Sources/JerricanApp/AudioRecorder.h) — background-threaded WAV export of the final mix
 - [Sources/JerricanApp/FastRandom.h](Sources/JerricanApp/FastRandom.h) — shared lightweight RNG
 - [Tests/](Tests/) — headless regression tests (`VoiceModelTest`, `VoiceOscillatorTest`, `GrainCloudTest`)
 - [build/](build/) — generated build output (gitignored)
