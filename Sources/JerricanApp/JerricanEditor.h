@@ -90,13 +90,14 @@ public:
             "currently focused (switch focus with Voice Select pads). "
             "Transport (Play/Stop/Reset/Randomize) is bindable too, as a "
             "global action rather than a per-voice one.\n\n"
-            "RECORDING\n"
+            "RECORDING (Standalone only)\n"
             "Record captures the exact final mix (everything, post-Reverb) "
             "to a timestamped WAV under ~/Music/Jerrican Recordings - click "
             "again to stop and finalize the file. Independent of the "
             "transport: you can record silence as easily as a running "
             "performance. \"Open Folder\" reveals the most recent "
-            "recording in Finder.\n\n" +
+            "recording in Finder. As an AU/VST3 plugin, use your host's "
+            "own recording/bounce workflow instead.\n\n" +
             juce::String(juce::CharPointer_UTF8("\xc2\xa9")) +
             " 2026 Alban Bailly. All rights reserved.";
 
@@ -159,6 +160,11 @@ public:
         recordButton.setButtonText("Record");
         recordButton.setClickingTogglesState(false);
         recordButton.onClick = [this] { toggleRecording(); };
+        // A DAW hosting this as a plugin already has its own record/
+        // bounce workflow — a plugin silently writing its own WAV to
+        // ~/Music independent of the host is redundant there. Standalone
+        // has no such host, so it's the only place this earns its keep.
+        recordButton.setVisible(processor_.wrapperType == juce::AudioProcessor::wrapperType_Standalone);
 
         addAndMakeVisible(scenesButton);
         scenesButton.setButtonText("Scenes");

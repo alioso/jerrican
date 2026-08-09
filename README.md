@@ -40,11 +40,12 @@ piece never plays the same way twice.
   (Play / Stop-Reset / Randomize)
 - MIDI Learn (per-voice controls apply to whichever voice is currently
   focused) and Scenes (full-state snapshot presets)
-- Audio export: a Record button captures the exact final mix to a
-  timestamped WAV under `~/Music/Jerrican Recordings`, via a
-  background-threaded writer (`AudioRecorder.h`) so the realtime audio
-  callback never blocks on file I/O; "Open Folder" reveals the last
-  recording in Finder
+- Audio export: a Record button (Standalone only — a hosted AU/VST3
+  instance leaves recording/bouncing to the DAW's own workflow) captures
+  the exact final mix to a timestamped WAV under `~/Music/Jerrican
+  Recordings`, via a background-threaded writer (`AudioRecorder.h`) so
+  the realtime audio callback never blocks on file I/O; "Open Folder"
+  reveals the last recording in Finder
 - Headless regression tests for the voice model, oscillator, and grain cloud
 
 ## Project structure
