@@ -293,6 +293,8 @@ public:
             handleMidiMessage(metadata.getMessage());
         }
 
+        processHostSync();
+
         auto* left = buffer.getWritePointer(0);
         auto* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : nullptr;
         const int numSamples = buffer.getNumSamples();
@@ -523,6 +525,9 @@ public:
     bool isPlaying() const { return isPlaying_.load(std::memory_order_relaxed); }
     int getFocusedVoiceIndex() const { return focusedVoiceIndex_.load(std::memory_order_relaxed); }
 
+    bool hostSyncEnabled() const { return hostSyncEnabled_.load(std::memory_order_relaxed); }
+    void setHostSyncEnabled(bool enabled) { hostSyncEnabled_.store(enabled, std::memory_order_relaxed); }
+
     VoiceModel& voice(std::size_t index) { return voices_[index]; }
     EvolutionEngine& evolutionEngine(std::size_t index) { return evolutionEngines_[index]; }
 
@@ -553,11 +558,34 @@ public:
     juce::String currentSceneName_;
 
 private:
+    // Mirrors the host's transport Play/Stop into isPlaying_ once per
+    // block, when Host Sync is enabled — so recording with a host count-
+    // in starts grain spawning on the same downbeat. Jerrican has no
+    // tempo/clock concept, so unlike Marmite's processHostSync there's no
+    // phase to snap or tempo to lock, just transport state. Standalone's
+    // playhead never reports real transport data, so this is a no-op
+    // there even if somehow left enabled.
+    void processHostSync() {
+        if (!hostSyncEnabled_.load(std::memory_order_relaxed)) {
+            return;
+        }
+        auto* playHead = getPlayHead();
+        if (playHead == nullptr) {
+            return;
+        }
+        const auto position = playHead->getPosition();
+        if (!position.hasValue()) {
+            return;
+        }
+        isPlaying_.store(position->getIsPlaying(), std::memory_order_relaxed);
+    }
+
     std::array<VoiceModel, 4> voices_;
     std::array<GrainCloud, 4> grainClouds_;
     std::array<EvolutionEngine, 4> evolutionEngines_;
     juce::Reverb reverb_;
     std::atomic<bool> isPlaying_{false};
+    std::atomic<bool> hostSyncEnabled_{false};
     std::atomic<float> evolutionAmount_{0.0f};
     std::atomic<float> evolutionSpeed_{0.5f};
     std::atomic<float> reverbRoom_{0.0f};

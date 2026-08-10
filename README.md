@@ -27,6 +27,10 @@ piece never plays the same way twice.
 - **Transport**: Play/Stop gate whether new grains spawn; already-sounding
   grains ring out on their own envelope on Stop rather than cutting
   abruptly. Stop also resets every voice back to its initial state.
+- **Host Sync** (AU/VST3 only): an opt-in toggle that makes Play/Stop
+  follow the host DAW's own transport, so a count-in before recording
+  starts grain spawning on the same downbeat. Off by default; Standalone
+  has no host transport to follow, so the toggle only appears when hosted.
 
 ## Current implementation
 

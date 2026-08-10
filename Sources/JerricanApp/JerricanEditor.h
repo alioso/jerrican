@@ -90,6 +90,12 @@ public:
             "currently focused (switch focus with Voice Select pads). "
             "Transport (Play/Stop/Reset/Randomize) is bindable too, as a "
             "global action rather than a per-voice one.\n\n"
+            "HOST SYNC (AU/VST3 only)\n"
+            "Available only when hosted in a DAW, since Standalone has no "
+            "host transport to follow. When enabled, Play/Stop follows "
+            "the host's transport - so a count-in before recording starts "
+            "Jerrican's grain spawning on the same downbeat. Off by "
+            "default, and not part of Scenes.\n\n"
             "RECORDING (Standalone only)\n"
             "Record captures the exact final mix (everything, post-Reverb) "
             "to a timestamped WAV under ~/Music/Jerrican Recordings - click "
@@ -154,6 +160,18 @@ public:
             if (auto* holder = juce::StandalonePluginHolder::getInstance()) {
                 holder->showAudioSettingsDialog();
             }
+        };
+
+        // Only meaningful once actually hosted in a DAW — Standalone's
+        // playhead never reports real transport data, so the toggle
+        // would be inert there (see JerricanProcessor::processHostSync).
+        addAndMakeVisible(hostSyncButton);
+        hostSyncButton.setButtonText("Host Sync");
+        hostSyncButton.setClickingTogglesState(true);
+        hostSyncButton.setToggleState(processor_.hostSyncEnabled(), juce::dontSendNotification);
+        hostSyncButton.setVisible(processor_.wrapperType != juce::AudioProcessor::wrapperType_Standalone);
+        hostSyncButton.onClick = [this] {
+            processor_.setHostSyncEnabled(hostSyncButton.getToggleState());
         };
 
         addAndMakeVisible(recordButton);
@@ -289,6 +307,10 @@ public:
         scenesButton.setBounds(getWidth() - 240, 32, 70, 24);
         recordButton.setBounds(getWidth() - 330, 32, 80, 24);
         audioSettingsButton.setBounds(getWidth() - 450, 32, 110, 24);
+        // Mutually exclusive with audioSettingsButton/recordButton
+        // (Standalone-only vs. hosted-only), so this can share the same
+        // slot without ever colliding with either.
+        hostSyncButton.setBounds(getWidth() - 450, 32, 110, 24);
 
         // Shared bottom baseline: every transport control's bottom edge
         // sits on this line, even though the Evolution knobs are taller
@@ -1516,6 +1538,7 @@ private:
     juce::Label subtitleLabel;
     juce::TextButton helpButton;
     juce::TextButton audioSettingsButton;
+    juce::TextButton hostSyncButton;
     juce::TextButton recordButton;
     juce::TextButton scenesButton;
     juce::TextButton bindingsButton;
