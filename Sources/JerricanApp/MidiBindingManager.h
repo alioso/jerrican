@@ -21,13 +21,23 @@
 // exception to "apply to the focused voice" — they're global actions,
 // same as Play/Stop/Reset/Randomize's on-screen buttons.
 enum class MidiTarget {
-    // Per-voice (13): applies to the focused voice.
+    // Per-voice (17): applies to the focused voice. VoiceMotion/
+    // VoiceComplexity keep their original identity/name (still exactly
+    // "Motion"/"Complexity" for Drone/Spark/Haze) even though Bass's own
+    // knobs for the same underlying VoiceModel fields are now labeled
+    // Groove/Wander — same precedent as Marmite's VoiceChaos staying the
+    // canonical MIDI target name while its on-card label reads "Busy".
+    // VoiceBusy/VoiceSustain are Bass-only; see JerricanProcessor.h's
+    // applyMidiTarget for the no-op-when-a-different-voice-is-focused
+    // behavior.
     VoicePitchCenter,
     VoiceVolume,
     VoiceTimbre,
     VoiceMotion,
     VoiceComplexity,
     VoiceDissonance,
+    VoiceBusy,
+    VoiceSustain,
     VoiceEnabledToggle,
     VoicePitchRangeEvoToggle,
     VoiceVolumeEvoToggle,
@@ -35,6 +45,8 @@ enum class MidiTarget {
     VoiceMotionEvoToggle,
     VoiceComplexityEvoToggle,
     VoiceDissonanceEvoToggle,
+    VoiceBusyEvoToggle,
+    VoiceSustainEvoToggle,
     // Voice focus (4).
     SelectVoice1,
     SelectVoice2,
@@ -45,21 +57,25 @@ enum class MidiTarget {
     TransportStop,
     TransportReset,
     TransportRandomize,
-    // Global (5).
+    // Global (7).
     EvolutionAmount,
     EvolutionSpeed,
     ReverbRoom,
     ReverbDecay,
     MasterVolume,
+    Tempo,
+    Meter,
 };
 
-inline constexpr std::array<MidiTarget, 26> kAllMidiTargets{
+inline constexpr std::array<MidiTarget, 32> kAllMidiTargets{
     MidiTarget::VoicePitchCenter,
     MidiTarget::VoiceVolume,
     MidiTarget::VoiceTimbre,
     MidiTarget::VoiceMotion,
     MidiTarget::VoiceComplexity,
     MidiTarget::VoiceDissonance,
+    MidiTarget::VoiceBusy,
+    MidiTarget::VoiceSustain,
     MidiTarget::VoiceEnabledToggle,
     MidiTarget::VoicePitchRangeEvoToggle,
     MidiTarget::VoiceVolumeEvoToggle,
@@ -67,6 +83,8 @@ inline constexpr std::array<MidiTarget, 26> kAllMidiTargets{
     MidiTarget::VoiceMotionEvoToggle,
     MidiTarget::VoiceComplexityEvoToggle,
     MidiTarget::VoiceDissonanceEvoToggle,
+    MidiTarget::VoiceBusyEvoToggle,
+    MidiTarget::VoiceSustainEvoToggle,
     MidiTarget::SelectVoice1,
     MidiTarget::SelectVoice2,
     MidiTarget::SelectVoice3,
@@ -80,6 +98,8 @@ inline constexpr std::array<MidiTarget, 26> kAllMidiTargets{
     MidiTarget::ReverbRoom,
     MidiTarget::ReverbDecay,
     MidiTarget::MasterVolume,
+    MidiTarget::Tempo,
+    MidiTarget::Meter,
 };
 
 // Single source of truth for target <-> name, used by the bindings popup
@@ -92,6 +112,8 @@ inline const char* midiTargetName(MidiTarget target) {
         case MidiTarget::VoiceMotion: return "VoiceMotion";
         case MidiTarget::VoiceComplexity: return "VoiceComplexity";
         case MidiTarget::VoiceDissonance: return "VoiceDissonance";
+        case MidiTarget::VoiceBusy: return "VoiceBusy";
+        case MidiTarget::VoiceSustain: return "VoiceSustain";
         case MidiTarget::VoiceEnabledToggle: return "VoiceEnabledToggle";
         case MidiTarget::VoicePitchRangeEvoToggle: return "VoicePitchRangeEvoToggle";
         case MidiTarget::VoiceVolumeEvoToggle: return "VoiceVolumeEvoToggle";
@@ -99,6 +121,8 @@ inline const char* midiTargetName(MidiTarget target) {
         case MidiTarget::VoiceMotionEvoToggle: return "VoiceMotionEvoToggle";
         case MidiTarget::VoiceComplexityEvoToggle: return "VoiceComplexityEvoToggle";
         case MidiTarget::VoiceDissonanceEvoToggle: return "VoiceDissonanceEvoToggle";
+        case MidiTarget::VoiceBusyEvoToggle: return "VoiceBusyEvoToggle";
+        case MidiTarget::VoiceSustainEvoToggle: return "VoiceSustainEvoToggle";
         case MidiTarget::SelectVoice1: return "SelectVoice1";
         case MidiTarget::SelectVoice2: return "SelectVoice2";
         case MidiTarget::SelectVoice3: return "SelectVoice3";
@@ -112,6 +136,8 @@ inline const char* midiTargetName(MidiTarget target) {
         case MidiTarget::ReverbRoom: return "ReverbRoom";
         case MidiTarget::ReverbDecay: return "ReverbDecay";
         case MidiTarget::MasterVolume: return "MasterVolume";
+        case MidiTarget::Tempo: return "Tempo";
+        case MidiTarget::Meter: return "Meter";
     }
     return "";
 }

@@ -6,12 +6,15 @@
 #include <optional>
 
 #include "AudioRecorder.h"
+#include "BassGroovePattern.h"
 #include "EvolutionEngine.h"
 #include "FastRandom.h"
 #include "Grain.h"
 #include "GrainCloud.h"
+#include "MeterTable.h"
 #include "MidiBindingManager.h"
 #include "MidiPresetStore.h"
+#include "PatternClock.h"
 #include "ScenePresetStore.h"
 #include "SceneState.h"
 #include "VoiceModel.h"
@@ -26,6 +29,12 @@ class JerricanAudioProcessorEditor;  // defined in JerricanEditor.h, included at
 // hosts, offline rendering).
 class JerricanAudioProcessor : public juce::AudioProcessor {
 public:
+    // groove/wander are the same VoiceModel fields the old Motion/
+    // Complexity macros used — only voice 0 (Bass) gives them a new
+    // meaning (rhythmic placement / harmonic roaming); Drone/Spark/Haze
+    // keep the exact old numeric values and exact old behavior (pitch-
+    // drift retarget rate / grain-spawn density). busy/sustain are
+    // Bass-only, unused by the other three.
     struct InitialVoice {
         const char* name;
         bool enabled;
@@ -33,9 +42,11 @@ public:
         float pitchLow;
         float pitchHigh;
         float timbre;
-        float motion;
-        float complexity;
+        float groove;
+        float wander;
         float dissonance;
+        float busy;
+        float sustain;
         int rootSemitoneOffset;
         float minGrainDurationMs;
         float maxGrainDurationMs;
@@ -44,46 +55,55 @@ public:
 
     // Grain duration range is the main lever for a voice's fundamental
     // character (see GrainCloud) — short & sparse reads as pointillistic,
-    // long & overlapping reads as a sustained drone. Complexity is tuned
-    // per archetype to suit that duration range. Character::Plucked
-    // (Pulse/Spark) gets a softened fast-attack envelope and a gentle
+    // long & overlapping reads as a sustained drone. Character::Plucked
+    // (Bass/Spark) gets a softened fast-attack envelope and a gentle
     // bright-to-dark filter sweep per grain; Character::Ambient (Drone/
     // Haze) is the original unfiltered symmetric envelope. Dissonance
     // near 0 for everyone by default so voices quantize mostly to their
     // (rooted) consonant scale out of the box; roots default to an A
     // major triad across the four voices.
+    //
+    // Bass (formerly Pulse) sits low in the 4-octave range (~75-260Hz),
+    // grain duration 60-260ms doubles as Sustain's 0/1 endpoints (see
+    // GrainCloud::spawnGrainNow), and Busy/Groove/Wander starting points
+    // aim for a moderate, mostly-anchored-to-root walking line — all
+    // tuning starting points, not locked.
     static constexpr std::array<InitialVoice, 4> kInitialVoices{
-        {{"Pulse", true, 0.65f, 0.40f, 0.65f, 0.40f, 0.45f, 0.35f, 0.15f, 0, 200.0f, 500.0f,
-          Grain::Character::Plucked},
-         {"Drone", true, 0.60f, 0.05f, 0.20f, 0.15f, 0.10f, 0.12f, 0.15f, 0, 1500.0f, 4000.0f,
-          Grain::Character::Ambient},
-         {"Spark", true, 0.55f, 0.60f, 0.85f, 0.70f, 0.50f, 0.45f, 0.15f, 7, 150.0f, 400.0f,
-          Grain::Character::Plucked},
-         {"Haze", true, 0.50f, 0.15f, 0.35f, 0.75f, 0.20f, 0.15f, 0.15f, 4, 2000.0f, 5000.0f,
-          Grain::Character::Ambient}}};
+        {{"Bass", true, 0.70f, 0.15f, 0.45f, 0.35f, 0.25f, 0.30f, 0.10f, 0.45f, 0.5f, 0, 110.0f,
+          1600.0f, Grain::Character::Plucked},
+         {"Drone", true, 0.60f, 0.05f, 0.20f, 0.15f, 0.10f, 0.12f, 0.15f, 0.5f, 0.5f, 0, 1500.0f,
+          4000.0f, Grain::Character::Ambient},
+         {"Spark", true, 0.55f, 0.60f, 0.85f, 0.70f, 0.50f, 0.45f, 0.15f, 0.5f, 0.5f, 7, 150.0f,
+          400.0f, Grain::Character::Plucked},
+         {"Haze", true, 0.50f, 0.15f, 0.35f, 0.75f, 0.20f, 0.15f, 0.15f, 0.5f, 0.5f, 4, 2000.0f,
+          5000.0f, Grain::Character::Ambient}}};
 
     JerricanAudioProcessor()
         : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo())),
           voices_{VoiceModel(kInitialVoices[0].name, kInitialVoices[0].enabled,
                               kInitialVoices[0].volume, kInitialVoices[0].pitchLow,
                               kInitialVoices[0].pitchHigh, kInitialVoices[0].timbre,
-                              kInitialVoices[0].motion, kInitialVoices[0].complexity,
-                              kInitialVoices[0].dissonance, kInitialVoices[0].rootSemitoneOffset),
+                              kInitialVoices[0].groove, kInitialVoices[0].wander,
+                              kInitialVoices[0].dissonance, kInitialVoices[0].rootSemitoneOffset,
+                              kInitialVoices[0].busy, kInitialVoices[0].sustain),
                   VoiceModel(kInitialVoices[1].name, kInitialVoices[1].enabled,
                               kInitialVoices[1].volume, kInitialVoices[1].pitchLow,
                               kInitialVoices[1].pitchHigh, kInitialVoices[1].timbre,
-                              kInitialVoices[1].motion, kInitialVoices[1].complexity,
-                              kInitialVoices[1].dissonance, kInitialVoices[1].rootSemitoneOffset),
+                              kInitialVoices[1].groove, kInitialVoices[1].wander,
+                              kInitialVoices[1].dissonance, kInitialVoices[1].rootSemitoneOffset,
+                              kInitialVoices[1].busy, kInitialVoices[1].sustain),
                   VoiceModel(kInitialVoices[2].name, kInitialVoices[2].enabled,
                               kInitialVoices[2].volume, kInitialVoices[2].pitchLow,
                               kInitialVoices[2].pitchHigh, kInitialVoices[2].timbre,
-                              kInitialVoices[2].motion, kInitialVoices[2].complexity,
-                              kInitialVoices[2].dissonance, kInitialVoices[2].rootSemitoneOffset),
+                              kInitialVoices[2].groove, kInitialVoices[2].wander,
+                              kInitialVoices[2].dissonance, kInitialVoices[2].rootSemitoneOffset,
+                              kInitialVoices[2].busy, kInitialVoices[2].sustain),
                   VoiceModel(kInitialVoices[3].name, kInitialVoices[3].enabled,
                               kInitialVoices[3].volume, kInitialVoices[3].pitchLow,
                               kInitialVoices[3].pitchHigh, kInitialVoices[3].timbre,
-                              kInitialVoices[3].motion, kInitialVoices[3].complexity,
-                              kInitialVoices[3].dissonance, kInitialVoices[3].rootSemitoneOffset)},
+                              kInitialVoices[3].groove, kInitialVoices[3].wander,
+                              kInitialVoices[3].dissonance, kInitialVoices[3].rootSemitoneOffset,
+                              kInitialVoices[3].busy, kInitialVoices[3].sustain)},
           grainClouds_{GrainCloud(0x1a2b3c4du, kInitialVoices[0].minGrainDurationMs,
                                    kInitialVoices[0].maxGrainDurationMs, kInitialVoices[0].character),
                        GrainCloud(0x5e6f7081u, kInitialVoices[1].minGrainDurationMs,
@@ -93,13 +113,17 @@ public:
                        GrainCloud(0xd6e7f809u, kInitialVoices[3].minGrainDurationMs,
                                    kInitialVoices[3].maxGrainDurationMs, kInitialVoices[3].character)},
           evolutionEngines_{EvolutionEngine(0x37a1f2c9u), EvolutionEngine(0x6b4d8e12u),
-                             EvolutionEngine(0xa9c3f501u), EvolutionEngine(0xe1d47b6au)} {
+                             EvolutionEngine(0xa9c3f501u), EvolutionEngine(0xe1d47b6au)},
+          currentBassAccentProfile_(
+              MeterTable::generateBassAccentProfile(MeterTable::kMeters[MeterTable::kDefaultMeterIndex])),
+          bassGroovePattern_(0x7a2c91efu, &currentBassAccentProfile_, currentMeterSlotCount_) {
         for (size_t i = 0; i < voices_.size(); ++i) {
             const auto& initial = kInitialVoices[i];
             const float center = (initial.pitchLow + initial.pitchHigh) * 0.5f;
             const float width = initial.pitchHigh - initial.pitchLow;
             evolutionEngines_[i].resetTo(center, width, initial.volume, initial.timbre,
-                                          initial.motion, initial.complexity, initial.dissonance);
+                                          initial.groove, initial.wander, initial.dissonance,
+                                          initial.busy, initial.sustain);
         }
         recordingThread_.startThread();
     }
@@ -136,6 +160,8 @@ public:
             engine.setSampleRate(sampleRate);
         }
         reverb_.setSampleRate(sampleRate);
+        patternClock_.setSampleRate(sampleRate);
+        patternClock_.setBpm(tempo_.load(std::memory_order_relaxed));
         sampleRate_ = sampleRate;
     }
 
@@ -193,17 +219,38 @@ public:
                 voice.setTimbre(value);
                 evolution.resyncTimbre(value);
                 break;
+            // VoiceMotion/VoiceComplexity keep their original MIDI-target
+            // identity (see MidiBindingManager.h) even though the
+            // VoiceModel fields underneath were renamed groove_/wander_ —
+            // for Bass this now means Groove/Wander, for Drone/Spark/Haze
+            // it's exactly the same Motion/Complexity behavior as before.
             case MidiTarget::VoiceMotion:
-                voice.setMotion(value);
-                evolution.resyncMotion(value);
+                voice.setGroove(value);
+                evolution.resyncGroove(value);
                 break;
             case MidiTarget::VoiceComplexity:
-                voice.setComplexity(value);
-                evolution.resyncComplexity(value);
+                voice.setWander(value);
+                evolution.resyncWander(value);
                 break;
             case MidiTarget::VoiceDissonance:
                 voice.setDissonance(value);
                 evolution.resyncDissonance(value);
+                break;
+            // Bass-only — no-op for the other three voices, since Busy/
+            // Sustain have no defined meaning for them (rather than
+            // silently reinterpreting a Groove-labeled MIDI input as some
+            // other behavior).
+            case MidiTarget::VoiceBusy:
+                if (focused == 0) {
+                    voice.setBusy(value);
+                    evolution.resyncBusy(value);
+                }
+                break;
+            case MidiTarget::VoiceSustain:
+                if (focused == 0) {
+                    voice.setSustain(value);
+                    evolution.resyncSustain(value);
+                }
                 break;
             case MidiTarget::VoiceEnabledToggle:
                 voice.setEnabled(!voice.isEnabled());
@@ -227,21 +274,37 @@ public:
                 break;
             }
             case MidiTarget::VoiceMotionEvoToggle: {
-                const bool on = !evolution.isMotionEnabled();
-                evolution.setMotionEnabled(on);
-                if (on) evolution.resyncMotion(voice.getMotion());
+                const bool on = !evolution.isGrooveEnabled();
+                evolution.setGrooveEnabled(on);
+                if (on) evolution.resyncGroove(voice.getGroove());
                 break;
             }
             case MidiTarget::VoiceComplexityEvoToggle: {
-                const bool on = !evolution.isComplexityEnabled();
-                evolution.setComplexityEnabled(on);
-                if (on) evolution.resyncComplexity(voice.getComplexity());
+                const bool on = !evolution.isWanderEnabled();
+                evolution.setWanderEnabled(on);
+                if (on) evolution.resyncWander(voice.getWander());
                 break;
             }
             case MidiTarget::VoiceDissonanceEvoToggle: {
                 const bool on = !evolution.isDissonanceEnabled();
                 evolution.setDissonanceEnabled(on);
                 if (on) evolution.resyncDissonance(voice.getDissonance());
+                break;
+            }
+            case MidiTarget::VoiceBusyEvoToggle: {
+                if (focused == 0) {
+                    const bool on = !evolution.isBusyEnabled();
+                    evolution.setBusyEnabled(on);
+                    if (on) evolution.resyncBusy(voice.getBusy());
+                }
+                break;
+            }
+            case MidiTarget::VoiceSustainEvoToggle: {
+                if (focused == 0) {
+                    const bool on = !evolution.isSustainEnabled();
+                    evolution.setSustainEnabled(on);
+                    if (on) evolution.resyncSustain(voice.getSustain());
+                }
                 break;
             }
             case MidiTarget::SelectVoice1:
@@ -283,6 +346,22 @@ public:
             case MidiTarget::MasterVolume:
                 masterVolume_.store(value, std::memory_order_relaxed);
                 break;
+            case MidiTarget::Tempo: {
+                const float bpm = 40.0f + value * (240.0f - 40.0f);
+                tempo_.store(bpm, std::memory_order_relaxed);
+                patternClock_.setBpm(bpm);
+                break;
+            }
+            // Quantizes the continuous 0..1 MIDI value onto the fixed set
+            // of 7 meters, same idiom as Marmite's DelayTime/Meter targets.
+            case MidiTarget::Meter: {
+                const int index = juce::jlimit(
+                    0, static_cast<int>(MeterTable::kMeters.size()) - 1,
+                    static_cast<int>(value * static_cast<float>(MeterTable::kMeters.size())));
+                requestMeter(MeterTable::kMeters[static_cast<std::size_t>(index)].numerator,
+                            MeterTable::kMeters[static_cast<std::size_t>(index)].denominator);
+                break;
+            }
         }
     }
 
@@ -291,6 +370,18 @@ public:
 
         for (const auto metadata : midiMessages) {
             handleMidiMessage(metadata.getMessage());
+        }
+
+        // Meter changes touch non-atomic state (currentBassAccentProfile_,
+        // bassGroovePattern_'s internal mask), so a change requested from
+        // the UI/MIDI thread is queued here and consumed once per block on
+        // the audio thread, rather than racing a torn write.
+        const int pendingMeter = pendingMeterIndex_.exchange(-1, std::memory_order_relaxed);
+        if (pendingMeter >= 0) {
+            applyMeterChange(pendingMeter);
+        }
+        if (pendingPhaseReset_.exchange(false, std::memory_order_relaxed)) {
+            resetPatternPhase();
         }
 
         processHostSync();
@@ -305,6 +396,12 @@ public:
         const float masterVolume = masterVolume_.load(std::memory_order_relaxed);
 
         for (int sample = 0; sample < numSamples; ++sample) {
+            const bool onGridBoundary = playing && patternClock_.tick();
+            if (onGridBoundary) {
+                currentSlot16_ = (currentSlot16_ + 1) % currentMeterSlotCount_;
+                currentSlot16Display_.store(currentSlot16_, std::memory_order_relaxed);
+            }
+
             float mixedLeft = 0.0f;
             float mixedRight = 0.0f;
 
@@ -314,13 +411,39 @@ public:
 
                 evolutionEngines_[i].update(voice, playing ? evolutionAmount : 0.0f, evolutionSpeed);
 
-                const float complexity = (playing && voice.isEnabled()) ? voice.getComplexity() : 0.0f;
-
-                const auto voiceSample =
-                    cloud.renderSample(voice.getPitchRangeLow(), voice.getPitchRangeHigh(),
-                                        voice.getTimbre(), voice.getMotion(), complexity,
-                                        voice.getVolume(), voice.getDissonance(),
-                                        voice.getRootSemitoneOffset());
+                Grain::StereoSample voiceSample;
+                if (i == 0) {
+                    // Bass: fully metered — Busy/Groove drive
+                    // BassGroovePattern's onset scheduling instead of
+                    // GrainCloud's own continuous stochastic spawn model,
+                    // so there's zero leftover stochastic texture. update()
+                    // still runs even when stopped/disabled (so a pending
+                    // delayed trigger's countdown gets consumed rather than
+                    // frozen), but the resulting trigger is only acted on
+                    // while actually playing and enabled.
+                    const auto trigger = bassGroovePattern_.update(
+                        onGridBoundary, currentSlot16_, voice.getBusy(), voice.getGroove(),
+                        evolutionAmount, patternClock_.getSamplesPerSubdivision());
+                    if (trigger.has_value() && playing && voice.isEnabled()) {
+                        cloud.spawnGrainNow(voice.getPitchRangeLow(), voice.getPitchRangeHigh(),
+                                            voice.getTimbre(), voice.getWander(), voice.getSustain(),
+                                            voice.getDissonance(), voice.getRootSemitoneOffset());
+                    }
+                    voiceSample = cloud.renderActiveGrainsCorrelated(voice.getVolume(), voice.getWander());
+                } else {
+                    // Drone/Spark/Haze: unchanged continuous stochastic
+                    // model. getGroove()/getWander() are the same
+                    // underlying fields as the old Motion/Complexity
+                    // (renamed at the VoiceModel level when Bass's
+                    // redesign gave those names new meaning for voice 0
+                    // only) — values and behavior are identical to before.
+                    const float spawnDensity =
+                        (playing && voice.isEnabled()) ? voice.getWander() : 0.0f;
+                    voiceSample = cloud.renderSample(voice.getPitchRangeLow(), voice.getPitchRangeHigh(),
+                                                     voice.getTimbre(), voice.getGroove(), spawnDensity,
+                                                     voice.getVolume(), voice.getDissonance(),
+                                                     voice.getRootSemitoneOffset());
+                }
                 mixedLeft += voiceSample.left;
                 mixedRight += voiceSample.right;
             }
@@ -375,22 +498,29 @@ public:
             voiceScene.pitchLow = voice.getPitchRangeLow();
             voiceScene.pitchHigh = voice.getPitchRangeHigh();
             voiceScene.timbre = voice.getTimbre();
-            voiceScene.motion = voice.getMotion();
-            voiceScene.complexity = voice.getComplexity();
+            voiceScene.motion = voice.getGroove();
+            voiceScene.complexity = voice.getWander();
             voiceScene.dissonance = voice.getDissonance();
             voiceScene.rootSemitoneOffset = voice.getRootSemitoneOffset();
+            voiceScene.busy = voice.getBusy();
+            voiceScene.sustain = voice.getSustain();
             voiceScene.volumeEvoEnabled = evolution.isVolumeEnabled();
             voiceScene.pitchRangeEvoEnabled = evolution.isPitchRangeEnabled();
             voiceScene.timbreEvoEnabled = evolution.isTimbreEnabled();
-            voiceScene.motionEvoEnabled = evolution.isMotionEnabled();
-            voiceScene.complexityEvoEnabled = evolution.isComplexityEnabled();
+            voiceScene.motionEvoEnabled = evolution.isGrooveEnabled();
+            voiceScene.complexityEvoEnabled = evolution.isWanderEnabled();
             voiceScene.dissonanceEvoEnabled = evolution.isDissonanceEnabled();
+            voiceScene.busyEvoEnabled = evolution.isBusyEnabled();
+            voiceScene.sustainEvoEnabled = evolution.isSustainEnabled();
         }
         scene.evolutionAmount = evolutionAmount_.load(std::memory_order_relaxed);
         scene.evolutionSpeed = evolutionSpeed_.load(std::memory_order_relaxed);
         scene.reverbRoom = reverbRoom_.load(std::memory_order_relaxed);
         scene.reverbDecay = reverbDecay_.load(std::memory_order_relaxed);
         scene.masterVolume = masterVolume_.load(std::memory_order_relaxed);
+        scene.tempo = tempo_.load(std::memory_order_relaxed);
+        scene.meterNumerator = meterNumeratorDisplay_.load(std::memory_order_relaxed);
+        scene.meterDenominator = meterDenominatorDisplay_.load(std::memory_order_relaxed);
         return scene;
     }
 
@@ -407,22 +537,26 @@ public:
             voices_[i].setVolume(voiceScene.volume);
             voices_[i].setPitchRange(voiceScene.pitchLow, voiceScene.pitchHigh);
             voices_[i].setTimbre(voiceScene.timbre);
-            voices_[i].setMotion(voiceScene.motion);
-            voices_[i].setComplexity(voiceScene.complexity);
+            voices_[i].setGroove(voiceScene.motion);
+            voices_[i].setWander(voiceScene.complexity);
             voices_[i].setDissonance(voiceScene.dissonance);
             voices_[i].setRootSemitoneOffset(voiceScene.rootSemitoneOffset);
+            voices_[i].setBusy(voiceScene.busy);
+            voices_[i].setSustain(voiceScene.sustain);
 
             const float center = (voiceScene.pitchLow + voiceScene.pitchHigh) * 0.5f;
             const float width = voiceScene.pitchHigh - voiceScene.pitchLow;
             evolutionEngines_[i].resetTo(center, width, voiceScene.volume, voiceScene.timbre,
                                          voiceScene.motion, voiceScene.complexity,
-                                         voiceScene.dissonance);
+                                         voiceScene.dissonance, voiceScene.busy, voiceScene.sustain);
             evolutionEngines_[i].setVolumeEnabled(voiceScene.volumeEvoEnabled);
             evolutionEngines_[i].setPitchRangeEnabled(voiceScene.pitchRangeEvoEnabled);
             evolutionEngines_[i].setTimbreEnabled(voiceScene.timbreEvoEnabled);
-            evolutionEngines_[i].setMotionEnabled(voiceScene.motionEvoEnabled);
-            evolutionEngines_[i].setComplexityEnabled(voiceScene.complexityEvoEnabled);
+            evolutionEngines_[i].setGrooveEnabled(voiceScene.motionEvoEnabled);
+            evolutionEngines_[i].setWanderEnabled(voiceScene.complexityEvoEnabled);
             evolutionEngines_[i].setDissonanceEnabled(voiceScene.dissonanceEvoEnabled);
+            evolutionEngines_[i].setBusyEnabled(voiceScene.busyEvoEnabled);
+            evolutionEngines_[i].setSustainEnabled(voiceScene.sustainEvoEnabled);
         }
 
         evolutionAmount_.store(scene.evolutionAmount, std::memory_order_relaxed);
@@ -430,6 +564,8 @@ public:
         reverbRoom_.store(scene.reverbRoom, std::memory_order_relaxed);
         reverbDecay_.store(scene.reverbDecay, std::memory_order_relaxed);
         masterVolume_.store(scene.masterVolume, std::memory_order_relaxed);
+        setTempo(scene.tempo);
+        requestMeter(scene.meterNumerator, scene.meterDenominator);
     }
 
     void resetVoicesToInitialState() {
@@ -439,16 +575,21 @@ public:
             voices_[i].setVolume(initial.volume);
             voices_[i].setPitchRange(initial.pitchLow, initial.pitchHigh);
             voices_[i].setTimbre(initial.timbre);
-            voices_[i].setMotion(initial.motion);
-            voices_[i].setComplexity(initial.complexity);
+            voices_[i].setGroove(initial.groove);
+            voices_[i].setWander(initial.wander);
             voices_[i].setDissonance(initial.dissonance);
             voices_[i].setRootSemitoneOffset(initial.rootSemitoneOffset);
+            voices_[i].setBusy(initial.busy);
+            voices_[i].setSustain(initial.sustain);
 
             const float center = (initial.pitchLow + initial.pitchHigh) * 0.5f;
             const float width = initial.pitchHigh - initial.pitchLow;
             evolutionEngines_[i].resetTo(center, width, initial.volume, initial.timbre,
-                                          initial.motion, initial.complexity, initial.dissonance);
+                                          initial.groove, initial.wander, initial.dissonance,
+                                          initial.busy, initial.sustain);
         }
+        // Same "back to defaults" contract for the time signature.
+        requestMeter(4, 4);
     }
 
     // The four transport actions — shared by a mouse click (via the
@@ -478,22 +619,28 @@ public:
             const float low = std::min(a, b);
             const float high = std::max(a, b);
             const float timbre = randomizeRandom_.nextFloat01();
-            const float motion = randomizeRandom_.nextFloat01();
-            const float complexity = randomizeRandom_.nextFloat01();
+            const float groove = randomizeRandom_.nextFloat01();
+            const float wander = randomizeRandom_.nextFloat01();
             const float volume = randomizeRandom_.nextFloat01();
             const float dissonance = randomizeRandom_.nextFloat01();
+            // Bass-only: also reroll Busy/Sustain, its other two bespoke
+            // controls — meaningless for Drone/Spark/Haze, left untouched.
+            const float busy = i == 0 ? randomizeRandom_.nextFloat01() : voices_[i].getBusy();
+            const float sustain = i == 0 ? randomizeRandom_.nextFloat01() : voices_[i].getSustain();
 
             voices_[i].setPitchRange(low, high);
             voices_[i].setTimbre(timbre);
-            voices_[i].setMotion(motion);
-            voices_[i].setComplexity(complexity);
+            voices_[i].setGroove(groove);
+            voices_[i].setWander(wander);
             voices_[i].setVolume(volume);
             voices_[i].setDissonance(dissonance);
+            voices_[i].setBusy(busy);
+            voices_[i].setSustain(sustain);
 
             const float center = (low + high) * 0.5f;
             const float width = high - low;
-            evolutionEngines_[i].resetTo(center, width, volume, timbre, motion, complexity,
-                                          dissonance);
+            evolutionEngines_[i].resetTo(center, width, volume, timbre, groove, wander, dissonance,
+                                          busy, sustain);
             grainClouds_[i].rerollDrift(low, high);
         }
     }
@@ -536,6 +683,30 @@ public:
     std::atomic<float>& reverbRoom() { return reverbRoom_; }
     std::atomic<float>& reverbDecay() { return reverbDecay_; }
     std::atomic<float>& masterVolume() { return masterVolume_; }
+    std::atomic<float>& tempo() { return tempo_; }
+
+    void setTempo(float bpm) {
+        tempo_.store(bpm, std::memory_order_relaxed);
+        patternClock_.setBpm(bpm);
+    }
+
+    // Queues a meter change, consumed on the audio thread at the top of
+    // the next processBlock (see applyMeterChange) — meter changes touch
+    // non-atomic state, so they can't be applied directly from the
+    // UI/MIDI thread. Falls back to 4/4 if the pair isn't one of the 7
+    // supported meters.
+    void requestMeter(int numerator, int denominator) {
+        pendingMeterIndex_.store(MeterTable::findMeterIndex(numerator, denominator),
+                                 std::memory_order_relaxed);
+    }
+
+    // Re-snaps Bass's pattern back to beat 1 without touching any knob or
+    // Scene state — a lightweight "resync the clock" independent of Reset.
+    void requestPhaseReset() { pendingPhaseReset_.store(true, std::memory_order_relaxed); }
+
+    int meterNumeratorDisplay() const { return meterNumeratorDisplay_.load(std::memory_order_relaxed); }
+    int meterDenominatorDisplay() const { return meterDenominatorDisplay_.load(std::memory_order_relaxed); }
+    int currentSlot16Display() const { return currentSlot16Display_.load(std::memory_order_relaxed); }
 
     MidiBindingManager midiBindings_;
     MidiPresetStore midiPresetStore_{
@@ -558,13 +729,38 @@ public:
     juce::String currentSceneName_;
 
 private:
-    // Mirrors the host's transport Play/Stop into isPlaying_ once per
-    // block, when Host Sync is enabled — so recording with a host count-
-    // in starts grain spawning on the same downbeat. Jerrican has no
-    // tempo/clock concept, so unlike Marmite's processHostSync there's no
-    // phase to snap or tempo to lock, just transport state. Standalone's
-    // playhead never reports real transport data, so this is a no-op
-    // there even if somehow left enabled.
+    // Regenerates Bass's accent profile for the new meter, reseats
+    // bassGroovePattern_ onto it, and forces a fresh mask (the old one was
+    // sized/shaped for the previous meter). Only ever called from the
+    // audio thread (top of processBlock), so no locking needed.
+    void applyMeterChange(int meterIndex) {
+        const auto& meter = MeterTable::kMeters[static_cast<std::size_t>(meterIndex)];
+        currentBassAccentProfile_ = MeterTable::generateBassAccentProfile(meter);
+        bassGroovePattern_.setAccentProfile(&currentBassAccentProfile_, meter.totalSlots);
+        bassGroovePattern_.forceRegenerateNextBoundary();
+        currentMeterSlotCount_ = meter.totalSlots;
+        currentSlot16_ = -1;
+        currentSlot16Display_.store(-1, std::memory_order_relaxed);
+        meterNumeratorDisplay_.store(meter.numerator, std::memory_order_relaxed);
+        meterDenominatorDisplay_.store(meter.denominator, std::memory_order_relaxed);
+    }
+
+    // Snaps back to beat 1 (slot 0) without touching the meter or any
+    // voice/knob state — just re-phases the existing pattern.
+    void resetPatternPhase() {
+        currentSlot16_ = -1;
+        currentSlot16Display_.store(-1, std::memory_order_relaxed);
+        bassGroovePattern_.forceRegenerateNextBoundary();
+    }
+
+    // Reads the host's transport once per block when Host Sync is
+    // enabled: mirrors host Play/Stop into isPlaying_, snaps Bass's
+    // pattern phase to the host's bar position on a transport start (or a
+    // large ppq jump mid-playback, e.g. a host loop point), and
+    // continuously locks tempo to the host's reported BPM. Standalone's
+    // playhead never reports real transport/tempo data, so this is a
+    // no-op there even if somehow left enabled. Ported from Marmite's
+    // processHostSync.
     void processHostSync() {
         if (!hostSyncEnabled_.load(std::memory_order_relaxed)) {
             return;
@@ -577,15 +773,84 @@ private:
         if (!position.hasValue()) {
             return;
         }
-        isPlaying_.store(position->getIsPlaying(), std::memory_order_relaxed);
+
+        const bool hostPlaying = position->getIsPlaying();
+        bool shouldSnap = false;
+
+        if (hostPlaying && !lastHostPlaying_) {
+            shouldSnap = true;
+        } else if (hostPlaying) {
+            if (const auto ppq = position->getPpqPosition()) {
+                const double barBeats = static_cast<double>(currentMeterSlotCount_) / 4.0;
+                if (hasLastHostPpq_ && (*ppq < lastHostPpq_ - 1.0e-6 || *ppq - lastHostPpq_ > barBeats)) {
+                    shouldSnap = true;
+                }
+                lastHostPpq_ = *ppq;
+                hasLastHostPpq_ = true;
+            }
+        } else {
+            hasLastHostPpq_ = false;
+        }
+
+        if (shouldSnap) {
+            isPlaying_.store(true, std::memory_order_relaxed);
+            const auto ppq = position->getPpqPosition();
+            const auto barStart = position->getPpqPositionOfLastBarStart();
+            if (ppq.hasValue() && barStart.hasValue()) {
+                const double ppqIntoBar = *ppq - *barStart;
+                const int rawSlot = static_cast<int>(ppqIntoBar * 4.0) % currentMeterSlotCount_;
+                const int slot = ((rawSlot % currentMeterSlotCount_) + currentMeterSlotCount_) %
+                                 currentMeterSlotCount_;
+                currentSlot16_ = slot - 1;  // the next tick's ++ lands exactly on `slot`
+                patternClock_.reset();
+                bassGroovePattern_.forceRegenerateNextBoundary();
+            }
+        } else if (!hostPlaying && lastHostPlaying_) {
+            isPlaying_.store(false, std::memory_order_relaxed);
+        }
+        lastHostPlaying_ = hostPlaying;
+
+        if (const auto bpm = position->getBpm()) {
+            const float bpmFloat = static_cast<float>(*bpm);
+            tempo_.store(bpmFloat, std::memory_order_relaxed);
+            patternClock_.setBpm(bpmFloat);
+        }
     }
 
     std::array<VoiceModel, 4> voices_;
     std::array<GrainCloud, 4> grainClouds_;
     std::array<EvolutionEngine, 4> evolutionEngines_;
     juce::Reverb reverb_;
+
+    // Declared (and thus constructed) before bassGroovePattern_, since it
+    // depends on currentMeterSlotCount_/currentBassAccentProfile_ — C++
+    // initializes members in declaration order regardless of the
+    // initializer list's order.
+    int currentMeterSlotCount_ = MeterTable::kMeters[MeterTable::kDefaultMeterIndex].totalSlots;
+    MeterTable::AccentProfile currentBassAccentProfile_;
+    PatternClock patternClock_;
+    BassGroovePattern bassGroovePattern_;
+    // Shared bar-position counter for Bass — advanced once per
+    // PatternClock grid tick. Starts at -1 so the first tick's increment
+    // lands on slot 0, not 1.
+    int currentSlot16_ = -1;
+    std::atomic<int> currentSlot16Display_{-1};
+    std::atomic<int> meterNumeratorDisplay_{
+        MeterTable::kMeters[MeterTable::kDefaultMeterIndex].numerator};
+    std::atomic<int> meterDenominatorDisplay_{
+        MeterTable::kMeters[MeterTable::kDefaultMeterIndex].denominator};
+    std::atomic<int> pendingMeterIndex_{-1};
+    std::atomic<bool> pendingPhaseReset_{false};
+    std::atomic<float> tempo_{120.0f};
+
     std::atomic<bool> isPlaying_{false};
     std::atomic<bool> hostSyncEnabled_{false};
+    // Host transport sync — plain, audio-thread-only, only ever read/
+    // written from processBlock/processHostSync.
+    bool lastHostPlaying_ = false;
+    bool hasLastHostPpq_ = false;
+    double lastHostPpq_ = 0.0;
+
     std::atomic<float> evolutionAmount_{0.0f};
     std::atomic<float> evolutionSpeed_{0.5f};
     std::atomic<float> reverbRoom_{0.0f};

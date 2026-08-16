@@ -11,6 +11,12 @@
 // currently making sound". Plain C++, JUCE-free, same convention as
 // MidiBinding — Main.cpp is the only place that reads/writes this
 // against the live VoiceModel/EvolutionEngine/atomics.
+// motion/complexity keep their original field names even though Bass's own
+// controls (built on these same VoiceModel fields) are now labeled Groove/
+// Wander — the serialized name is an internal identifier, not something a
+// user sees, so renaming it would only add a backward-compatibility
+// migration for zero benefit. busy/sustain are Bass-only (unused, but
+// still saved/loaded, for Drone/Spark/Haze).
 struct VoiceSceneState {
     bool enabled = true;
     float volume = 0.0f;
@@ -21,12 +27,16 @@ struct VoiceSceneState {
     float complexity = 0.0f;
     float dissonance = 0.0f;
     int rootSemitoneOffset = 0;
+    float busy = 0.5f;
+    float sustain = 0.5f;
     bool volumeEvoEnabled = true;
     bool pitchRangeEvoEnabled = true;
     bool timbreEvoEnabled = true;
     bool motionEvoEnabled = true;
     bool complexityEvoEnabled = true;
     bool dissonanceEvoEnabled = true;
+    bool busyEvoEnabled = true;
+    bool sustainEvoEnabled = true;
 };
 
 struct SceneState {
@@ -36,6 +46,12 @@ struct SceneState {
     float reverbRoom = 0.0f;
     float reverbDecay = 0.0f;
     float masterVolume = 1.0f;
+    // Tempo/meter — see PatternClock.h/MeterTable.h. Only Bass consumes
+    // these so far, but they're global/instrument-wide the same way
+    // Marmite's are.
+    float tempo = 120.0f;
+    int meterNumerator = 4;
+    int meterDenominator = 4;
 };
 
 namespace SceneStateDetail {
@@ -53,12 +69,13 @@ inline bool operator==(const VoiceSceneState& a, const VoiceSceneState& b) {
            nearlyEqual(a.pitchLow, b.pitchLow) && nearlyEqual(a.pitchHigh, b.pitchHigh) &&
            nearlyEqual(a.timbre, b.timbre) && nearlyEqual(a.motion, b.motion) &&
            nearlyEqual(a.complexity, b.complexity) && nearlyEqual(a.dissonance, b.dissonance) &&
-           a.rootSemitoneOffset == b.rootSemitoneOffset &&
-           a.volumeEvoEnabled == b.volumeEvoEnabled &&
+           a.rootSemitoneOffset == b.rootSemitoneOffset && nearlyEqual(a.busy, b.busy) &&
+           nearlyEqual(a.sustain, b.sustain) && a.volumeEvoEnabled == b.volumeEvoEnabled &&
            a.pitchRangeEvoEnabled == b.pitchRangeEvoEnabled &&
            a.timbreEvoEnabled == b.timbreEvoEnabled && a.motionEvoEnabled == b.motionEvoEnabled &&
            a.complexityEvoEnabled == b.complexityEvoEnabled &&
-           a.dissonanceEvoEnabled == b.dissonanceEvoEnabled;
+           a.dissonanceEvoEnabled == b.dissonanceEvoEnabled &&
+           a.busyEvoEnabled == b.busyEvoEnabled && a.sustainEvoEnabled == b.sustainEvoEnabled;
 }
 
 inline bool operator==(const SceneState& a, const SceneState& b) {
@@ -71,5 +88,6 @@ inline bool operator==(const SceneState& a, const SceneState& b) {
     return nearlyEqual(a.evolutionAmount, b.evolutionAmount) &&
            nearlyEqual(a.evolutionSpeed, b.evolutionSpeed) &&
            nearlyEqual(a.reverbRoom, b.reverbRoom) && nearlyEqual(a.reverbDecay, b.reverbDecay) &&
-           nearlyEqual(a.masterVolume, b.masterVolume);
+           nearlyEqual(a.masterVolume, b.masterVolume) && nearlyEqual(a.tempo, b.tempo) &&
+           a.meterNumerator == b.meterNumerator && a.meterDenominator == b.meterDenominator;
 }

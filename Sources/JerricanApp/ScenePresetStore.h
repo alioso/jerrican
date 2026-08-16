@@ -87,18 +87,25 @@ public:
             file << prefix << "complexity=" << voice.complexity << "\n";
             file << prefix << "dissonance=" << voice.dissonance << "\n";
             file << prefix << "rootSemitoneOffset=" << voice.rootSemitoneOffset << "\n";
+            file << prefix << "busy=" << voice.busy << "\n";
+            file << prefix << "sustain=" << voice.sustain << "\n";
             file << prefix << "volumeEvoEnabled=" << (voice.volumeEvoEnabled ? 1 : 0) << "\n";
             file << prefix << "pitchRangeEvoEnabled=" << (voice.pitchRangeEvoEnabled ? 1 : 0) << "\n";
             file << prefix << "timbreEvoEnabled=" << (voice.timbreEvoEnabled ? 1 : 0) << "\n";
             file << prefix << "motionEvoEnabled=" << (voice.motionEvoEnabled ? 1 : 0) << "\n";
             file << prefix << "complexityEvoEnabled=" << (voice.complexityEvoEnabled ? 1 : 0) << "\n";
             file << prefix << "dissonanceEvoEnabled=" << (voice.dissonanceEvoEnabled ? 1 : 0) << "\n";
+            file << prefix << "busyEvoEnabled=" << (voice.busyEvoEnabled ? 1 : 0) << "\n";
+            file << prefix << "sustainEvoEnabled=" << (voice.sustainEvoEnabled ? 1 : 0) << "\n";
         }
         file << "global.evolutionAmount=" << state.evolutionAmount << "\n";
         file << "global.evolutionSpeed=" << state.evolutionSpeed << "\n";
         file << "global.reverbRoom=" << state.reverbRoom << "\n";
         file << "global.reverbDecay=" << state.reverbDecay << "\n";
         file << "global.masterVolume=" << state.masterVolume << "\n";
+        file << "global.tempo=" << state.tempo << "\n";
+        file << "global.meterNumerator=" << state.meterNumerator << "\n";
+        file << "global.meterDenominator=" << state.meterDenominator << "\n";
         return file.str();
     }
 
@@ -152,6 +159,9 @@ private:
             else if (field == "reverbRoom") state.reverbRoom = value;
             else if (field == "reverbDecay") state.reverbDecay = value;
             else if (field == "masterVolume") state.masterVolume = value;
+            else if (field == "tempo") state.tempo = value;
+            else if (field == "meterNumerator") state.meterNumerator = static_cast<int>(value);
+            else if (field == "meterDenominator") state.meterDenominator = static_cast<int>(value);
             return;
         }
 
@@ -184,12 +194,16 @@ private:
         else if (field == "complexity") voice.complexity = value;
         else if (field == "dissonance") voice.dissonance = value;
         else if (field == "rootSemitoneOffset") voice.rootSemitoneOffset = static_cast<int>(value);
+        else if (field == "busy") voice.busy = value;
+        else if (field == "sustain") voice.sustain = value;
         else if (field == "volumeEvoEnabled") voice.volumeEvoEnabled = boolValue;
         else if (field == "pitchRangeEvoEnabled") voice.pitchRangeEvoEnabled = boolValue;
         else if (field == "timbreEvoEnabled") voice.timbreEvoEnabled = boolValue;
         else if (field == "motionEvoEnabled") voice.motionEvoEnabled = boolValue;
         else if (field == "complexityEvoEnabled") voice.complexityEvoEnabled = boolValue;
         else if (field == "dissonanceEvoEnabled") voice.dissonanceEvoEnabled = boolValue;
+        else if (field == "busyEvoEnabled") voice.busyEvoEnabled = boolValue;
+        else if (field == "sustainEvoEnabled") voice.sustainEvoEnabled = boolValue;
     }
 
     std::filesystem::path directory_;
