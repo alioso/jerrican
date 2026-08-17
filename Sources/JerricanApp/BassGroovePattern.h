@@ -119,12 +119,14 @@ private:
             // Even the busy-floor above is still only a *probability* —
             // at low Busy, a bar can (and, over a few bars, realistically
             // will) roll every one of its downbeats inactive, which reads
-            // as "the instrument stopped." A pulse group's true downbeat
-            // (weight 1.0 — see MeterTable::generateBassAccentProfile)
-            // always fires: a walking bass should never skip its own
-            // downbeat regardless of how low Busy is turned. Busy/Groove
-            // still fully govern everything in between.
-            if (profileWeight >= kGuaranteedDownbeatWeight) {
+            // as "the instrument stopped." Only the bar's own downbeat
+            // (slot 0) is unconditionally guaranteed — one note per bar
+            // at Busy=0, a whole note, not one per beat. Every OTHER pulse
+            // group's downbeat (there are several per bar in most meters —
+            // e.g. 4 in 4/4, one per quarter note) stays fully
+            // probabilistic like any other slot, so Busy still controls
+            // how many of those extra accents fill in.
+            if (slot == 0) {
                 slotActive_[static_cast<std::size_t>(slot)] = true;
                 continue;
             }
@@ -143,7 +145,6 @@ private:
     static constexpr float kParamChangeThreshold = 0.01f;
     static constexpr float kBaselineMutationProbability = 0.03f;
     static constexpr float kMinBusy = 0.12f;
-    static constexpr float kGuaranteedDownbeatWeight = 0.99f;
 
     FastRandom random_;
     const MeterTable::AccentProfile* accentProfile_;

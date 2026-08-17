@@ -172,6 +172,8 @@ int main() {
         assert(engine.isDissonanceEnabled());
         assert(engine.isBusyEnabled());
         assert(engine.isSustainEnabled());
+        assert(engine.isCleanlinessEnabled());
+        assert(engine.isAttackEnabled());
 
         engine.setVolumeEnabled(false);
         engine.setPitchRangeEnabled(false);
@@ -181,6 +183,8 @@ int main() {
         engine.setDissonanceEnabled(false);
         engine.setBusyEnabled(false);
         engine.setSustainEnabled(false);
+        engine.setCleanlinessEnabled(false);
+        engine.setAttackEnabled(false);
 
         assert(!engine.isVolumeEnabled());
         assert(!engine.isPitchRangeEnabled());
@@ -190,27 +194,36 @@ int main() {
         assert(!engine.isDissonanceEnabled());
         assert(!engine.isBusyEnabled());
         assert(!engine.isSustainEnabled());
+        assert(!engine.isCleanlinessEnabled());
+        assert(!engine.isAttackEnabled());
     }
 
-    // Busy/Sustain — the two macros added for Bass — evolve the same way
-    // every other macro does (part of the data-driven refactor's
-    // regression guard), even for a non-Bass voice where they're unused.
+    // Busy/Sustain/Cleanliness/Attack — the macros added for Bass and
+    // Ambient — evolve the same way every other macro does (part of the
+    // data-driven refactor's regression guard), even for a voice where
+    // they're unused.
     {
         VoiceModel voice = makeTestVoice();
         EvolutionEngine engine(8u);
         engine.setSampleRate(kSampleRate);
-        engine.resetTo(0.5f, 0.2f, 0.7f, 0.5f, 0.3f, 0.4f, 0.6f, 0.5f, 0.5f);
+        engine.resetTo(0.5f, 0.2f, 0.7f, 0.5f, 0.3f, 0.4f, 0.6f, 0.5f, 0.5f, 0.5f, 0.5f);
 
         bool busyChanged = false;
         bool sustainChanged = false;
+        bool cleanlinessChanged = false;
+        bool attackChanged = false;
         for (int i = 0; i < static_cast<int>(kSampleRate) * 5; ++i) {
             engine.update(voice, 1.0f, 1.0f);
             if (voice.getBusy() != 0.5f) busyChanged = true;
             if (voice.getSustain() != 0.5f) sustainChanged = true;
+            if (voice.getCleanliness() != 0.5f) cleanlinessChanged = true;
+            if (voice.getAttack() != 0.5f) attackChanged = true;
         }
 
         assert(busyChanged);
         assert(sustainChanged);
+        assert(cleanlinessChanged);
+        assert(attackChanged);
     }
 
     std::cout << "EvolutionEngine tests passed" << std::endl;

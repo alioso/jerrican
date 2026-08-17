@@ -16,13 +16,22 @@
 // the UI thread) — the UI only ever passes in the current macro values by
 // value each call.
 //
-// Drone/Spark/Haze use renderSample() exactly as before — continuous
-// stochastic grain spawning driven by Motion (pitch drift retarget rate)
-// and Complexity (grain density). Bass instead uses spawnGrainNow() +
-// renderActiveGrainsCorrelated(), called directly by
-// JerricanAudioProcessor's metered scheduler (see BassGroovePattern.h) —
-// its rhythm comes entirely
-// from the beat grid now, with zero leftover stochastic spawning texture.
+// Spark/Haze use renderSample() exactly as before — continuous stochastic
+// grain spawning driven by Motion (pitch drift retarget rate) and
+// Complexity (grain density). Ambient uses renderAmbientSample() — Speed
+// directly scales grain duration (see maybeSpawnAmbientGrain; this is the
+// dominant driver of how fast an ambient pad feels like it's evolving,
+// unlike Spark/Haze where Motion only nudges a hidden pitch-drift retarget
+// rate), Layers (Complexity relabeled) drives grain density — triggering
+// grains via Grain::triggerAmbient (Material/Cleanliness) instead of the
+// random pickWaveform lottery, and rendering via
+// renderActiveGrainsCorrelated (like Bass) since Ambient's long,
+// narrow-pitch-spread overlapping grains are correlated enough that the
+// plain sqrt(N) normalization let them hit the hard clamp and produce
+// audible digital-clipping crackle. Bass instead uses spawnGrainNow(),
+// called directly by JerricanAudioProcessor's metered scheduler (see
+// BassGroovePattern.h) — its rhythm comes entirely from the beat grid
+// now, with zero leftover stochastic spawning texture.
 class GrainCloud {
 public:
     static constexpr int kMaxGrains = 24;
@@ -73,6 +82,29 @@ public:
         return renderActiveGrains(volume);
     }
 
+    // Ambient-only. updateDrift() (pitch-drift retarget rate) still runs
+    // off Speed too, as a secondary texture, but the primary, clearly
+    // audible effect of Speed is grain-duration scaling inside
+    // maybeSpawnAmbientGrain — see there. `active` gates whether new
+    // grains are allowed to spawn at all (Play/Stop, voice enabled),
+    // fully separate from Layers' density value: Layers=0 must still mean
+    // "very sparse", not "silent", so it can't double as the stop/start
+    // gate the way Spark/Haze's spawnDensity=0-when-stopped trick does —
+    // Ambient's own density floor (see maybeSpawnAmbientGrain) would
+    // otherwise keep spawning new grains forever even while stopped, or
+    // before Play was ever pressed.
+    Grain::StereoSample renderAmbientSample(float pitchRangeLow, float pitchRangeHigh,
+                                             float material, float speed, float complexity,
+                                             float volume, float dissonance, float cleanliness,
+                                             bool active, int rootSemitoneOffset = 0) {
+        updateDrift(pitchRangeLow, pitchRangeHigh, speed);
+        if (active) {
+            maybeSpawnAmbientGrain(pitchRangeLow, pitchRangeHigh, material, speed, complexity,
+                                   dissonance, cleanliness, rootSemitoneOffset);
+        }
+        return renderActiveGrainsCorrelated(volume, kAmbientCorrelationWander);
+    }
+
     // Bass-only: places a grain immediately, bypassing the continuous
     // Bernoulli-trial spawn probability entirely — called only when the
     // metered scheduler (BassGroovePattern) fires a trigger, not every
@@ -86,7 +118,7 @@ public:
     // centered in a mix), unlike the fully-random pan the stochastic path
     // uses for the other voices.
     void spawnGrainNow(float pitchRangeLow, float pitchRangeHigh, float timbre, float wander,
-                       float sustain, float dissonance, int rootSemitoneOffset) {
+                       float sustain, float dissonance, float attack, int rootSemitoneOffset) {
         for (auto& grain : grains_) {
             if (grain.isActive()) {
                 continue;
@@ -116,7 +148,7 @@ public:
 
             const float pan = 0.5f + random_.nextFloatRange(-0.2f, 0.2f);
 
-            grain.triggerBlended(sampleRate_, pitch, durationMs, pan, timbre, character_);
+            grain.triggerBlended(sampleRate_, pitch, durationMs, pan, timbre, attack, character_);
             return;
         }
     }
@@ -148,38 +180,45 @@ public:
                 std::max(-1.0f, std::min(1.0f, right * gain))};
     }
 
-    // Bass-only equivalent of renderActiveGrains, called instead of it in
-    // JerricanAudioProcessor's per-sample loop for voice 0. Bass's grains
-    // sum close to linearly (rather than the sqrt(N) the shared method
-    // assumes for decorrelated random scatter) only when they're actually
-    // correlated — i.e. the same pitch, which Wander controls directly
-    // (0 = pedal tone, everything coincides; higher = pitches scatter
-    // across the scale, closer to decorrelated). Blending the
-    // normalization's exponent by Wander means the strong 1/N protection
-    // only kicks in when it's actually needed (low Wander), rather than
-    // unconditionally — at higher Wander it relaxes toward the same
-    // sqrt(N) headroom the other three voices get, so raising Busy
-    // doesn't quietly turn Bass down for every Wander setting. A fixed
-    // extra boost on top accounts for Bass structurally having far fewer
-    // simultaneously-active grains than Drone/Spark/Haze's continuous
-    // overlapping textures (it's a melodic line, not a pad) — without it,
-    // Bass reads quieter than the others even at a higher Volume setting.
+    // Correlated-aware equivalent of renderActiveGrains, used by both Bass
+    // and Ambient in place of it. Grains that sum close to linearly
+    // (rather than the sqrt(N) the shared method assumes for decorrelated
+    // random scatter) — because they're actually correlated, i.e. close
+    // in pitch — need stronger normalization or they hit the hard clamp
+    // and produce audible digital-clipping crackle. For Bass, Wander
+    // controls that directly (0 = pedal tone, everything coincides;
+    // higher = pitches scatter across the scale, closer to decorrelated),
+    // so its exponent is blended live by Wander. Ambient has no
+    // equivalent per-note pitch-spread control (its scatter comes from a
+    // fixed internal spread around a slowly-drifting center — see
+    // updateDrift/localSpreadFraction), so it's called with a fixed
+    // moderate correlation constant instead — its long, multi-second
+    // grains overlap heavily enough, clustered narrowly enough, that this
+    // needs to lean toward the stronger end most of the time. `boost` is
+    // a flat makeup-gain multiplier on top, since Bass (a single melodic
+    // line, usually 1 grain at a time) and Ambient (a dense continuous
+    // pad) start from very different baseline loudness and need different
+    // compensation.
     //
     // The normalization glides toward its target (an envelope follower,
     // not applied instantly) rather than snapping to it every sample: at
-    // low Wander it's a much steeper function of N than sqrt(N), and at
-    // high Groove/Busy, N can change several times a second as grains
+    // low correlation-exponent settings it's a much steeper function of N
+    // than sqrt(N), and N can change several times a second as grains
     // start/stop — snapping the gain every time produced its own audible
     // stepping/pumping artifact (an earlier version of this fix baked a
     // fixed compensation into each grain at trigger time instead, which
     // fought renderActiveGrains' own per-sample renormalization the same
-    // way). Fast attack (duck quickly when N just rose, to still catch
-    // the coherent peak before it clips) / slow release (ease back up
-    // when N falls, so decaying notes don't pump the volume). No
+    // way). Moderate attack/slower release (see kCorrelatedAttackSeconds/
+    // kCorrelatedReleaseSeconds) — reacts to sustained density trends
+    // rather than ducking on every individual note onset, which produced
+    // an audible "wave" pump under long sustained notes when the pattern
+    // fired new grains while an old one was still ringing. No
     // breathingGain_ term — that's driftCenter_/breathingGain_'s
-    // renderSample-only drift mechanic, which spawnGrainNow never
-    // touches, so it would always be a no-op 1.0 here anyway.
-    Grain::StereoSample renderActiveGrainsCorrelated(float volume, float wander) {
+    // renderSample-only drift mechanic, which spawnGrainNow/
+    // maybeSpawnAmbientGrain never touches, so it would always be a
+    // no-op 1.0 here anyway.
+    Grain::StereoSample renderActiveGrainsCorrelated(float volume, float wander,
+                                                       float boost = 1.0f) {
         float left = 0.0f;
         float right = 0.0f;
         int activeCount = 0;
@@ -201,7 +240,7 @@ public:
                                        : correlatedReleaseCoefficient_;
         correlatedNormalization_ += (targetNormalization - correlatedNormalization_) * coefficient;
 
-        const float gain = volume * correlatedNormalization_ * kBassLoudnessBoost;
+        const float gain = volume * correlatedNormalization_ * boost;
         return {std::max(-1.0f, std::min(1.0f, left * gain)),
                 std::max(-1.0f, std::min(1.0f, right * gain))};
     }
@@ -253,6 +292,58 @@ private:
         }
     }
 
+    // Ambient-only equivalent of maybeSpawnGrain — same pitch-spread/
+    // Dissonance shape, calling triggerAmbient with Material/Cleanliness
+    // instead of trigger(pickWaveform(timbre)), with three differences:
+    // Layers=0 is floored above true zero (a pad going fully silent
+    // because a knob hit its exact minimum isn't "sparse", it's broken —
+    // same reasoning as Bass's Busy floor); the density ceiling is its
+    // own, much lower than maxGrainsPerSecond (that constant assumes
+    // short instrument-like grains; Ambient's grains last seconds each,
+    // so even a handful of new layers per second already means a very
+    // dense overlapping wash); and Speed directly scales grain duration —
+    // the dominant, clearly-audible driver of how fast this pad's layers
+    // turn over and feel like they're moving, unlike the barely-perceptible
+    // pitch-drift-retarget effect Motion/Speed has via updateDrift() alone.
+    // Speed=0 stretches duration out by kAmbientSlowDurationMultiple, so
+    // "slow" is genuinely glacial rather than nearly the same as "fast".
+    void maybeSpawnAmbientGrain(float low, float high, float material, float speed, float complexity,
+                                float dissonance, float cleanliness, int rootSemitoneOffset) {
+        const float clampedComplexity = std::max(0.0f, std::min(1.0f, complexity));
+        const float grainsPerSecond =
+            kMinAmbientGrainsPerSecond +
+            clampedComplexity * (kMaxAmbientGrainsPerSecond - kMinAmbientGrainsPerSecond);
+        const float spawnProbabilityPerSample = grainsPerSecond / static_cast<float>(sampleRate_);
+        if (random_.nextFloat01() >= spawnProbabilityPerSample) {
+            return;
+        }
+
+        for (auto& grain : grains_) {
+            if (grain.isActive()) {
+                continue;
+            }
+
+            const float spread = (high - low) * localSpreadFraction;
+            const float lo = std::max(low, std::min(high, driftCenter_ - spread));
+            const float hi = std::max(low, std::min(high, driftCenter_ + spread));
+            const float rawPitch = random_.nextFloatRange(std::min(lo, hi), std::max(lo, hi));
+
+            const float quantizedPitch = HarmonicScale::quantize(rawPitch, rootSemitoneOffset);
+            const float pitch = quantizedPitch + (rawPitch - quantizedPitch) * dissonance;
+
+            const float clampedSpeed = std::max(0.0f, std::min(1.0f, speed));
+            const float durationScale = lerp(kAmbientSlowDurationMultiple, 1.0f, clampedSpeed);
+            const float durationMs =
+                random_.nextFloatRange(minGrainDurationMs_, maxGrainDurationMs_) * durationScale;
+            const float pan = random_.nextFloat01();
+
+            grain.triggerAmbient(sampleRate_, pitch, durationMs, pan, material, cleanliness);
+            return;
+        }
+    }
+
+    static float lerp(float a, float b, float t) { return a + (b - a) * t; }
+
     VoiceOscillator::Waveform pickWaveform(float timbre) {
         const float position = std::max(0.0f, std::min(1.0f, timbre)) * 3.0f;  // 0..3
         const float jittered =
@@ -275,9 +366,31 @@ private:
     static constexpr float localSpreadFraction = 0.15f;
     static constexpr float maxGrainsPerSecond = 40.0f;
     static constexpr float kWanderSpreadFraction = 0.35f;
-    static constexpr float kCorrelatedAttackSeconds = 0.001f;   // ~1ms: fast enough to catch a pileup
-    static constexpr float kCorrelatedReleaseSeconds = 0.03f;   // ~30ms: slow enough not to pump
-    static constexpr float kBassLoudnessBoost = 1.5f;
+    // This gain follower is shared across the whole cloud's mixed output,
+    // not per-grain — so on a long Sustain=1 note, every subsequent note
+    // the pattern fires while the old one is still ringing changes the
+    // active-grain count and re-triggers this envelope, ducking the
+    // ALREADY-SOUNDING sustained note too. At the original 1ms attack /
+    // 30ms release this was audible as a repeating "wave down, wave up"
+    // pump for the note's whole life. kCoreHeadroom (Grain.h) already
+    // gives real peak margin now, so this can afford to react far more
+    // gently — it's here to tame sustained buildup trends, not to be a
+    // sample-accurate limiter that ducks on every single note onset.
+    static constexpr float kCorrelatedAttackSeconds = 0.02f;   // ~20ms
+    static constexpr float kCorrelatedReleaseSeconds = 0.25f;  // ~250ms
+    // Ambient's own density range — see maybeSpawnAmbientGrain. A floor
+    // above zero so Layers=0 is "a single sparse layer", not silence; a
+    // ceiling far below the shared maxGrainsPerSecond since Ambient's
+    // multi-second grains overlap far more per spawn than short ones do.
+    static constexpr float kMinAmbientGrainsPerSecond = 0.15f;
+    static constexpr float kMaxAmbientGrainsPerSecond = 5.0f;
+    // Ambient has no per-note pitch-spread control the way Bass's Wander
+    // is — a fixed, moderately-correlated assumption for
+    // renderActiveGrainsCorrelated instead (see there).
+    static constexpr float kAmbientCorrelationWander = 0.3f;
+    // How much longer Speed=0 grains last than the configured (Speed=1)
+    // min/maxGrainDurationMs_ range — see maybeSpawnAmbientGrain.
+    static constexpr float kAmbientSlowDurationMultiple = 3.0f;
 
     double sampleRate_ = 44100.0;
     std::array<Grain, kMaxGrains> grains_;

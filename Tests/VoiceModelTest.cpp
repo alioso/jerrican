@@ -20,6 +20,8 @@ int main() {
     assert(voice.getDissonance() == 0.6f);
     assert(voice.getBusy() == 0.5f);   // default
     assert(voice.getSustain() == 0.5f);  // default
+    assert(voice.getCleanliness() == 0.5f);  // default
+    assert(voice.getAttack() == 0.5f);  // default
 
     voice.setEnabled(false);
     voice.setVolume(1.8f);
@@ -30,6 +32,8 @@ int main() {
     voice.setDissonance(-1.0f);
     voice.setBusy(2.0f);
     voice.setSustain(-1.0f);
+    voice.setCleanliness(2.0f);
+    voice.setAttack(-1.0f);
 
     assert(!voice.isEnabled());
     assert(voice.getVolume() == 1.0f);
@@ -40,6 +44,8 @@ int main() {
     assert(voice.getDissonance() == 0.0f);
     assert(voice.getBusy() == 1.0f);
     assert(voice.getSustain() == 0.0f);
+    assert(voice.getCleanliness() == 1.0f);
+    assert(voice.getAttack() == 0.0f);
 
     std::cout << voice.getSummary() << std::endl;
     return 0;

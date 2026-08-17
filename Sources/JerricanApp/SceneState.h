@@ -11,12 +11,13 @@
 // currently making sound". Plain C++, JUCE-free, same convention as
 // MidiBinding — Main.cpp is the only place that reads/writes this
 // against the live VoiceModel/EvolutionEngine/atomics.
-// motion/complexity keep their original field names even though Bass's own
-// controls (built on these same VoiceModel fields) are now labeled Groove/
-// Wander — the serialized name is an internal identifier, not something a
-// user sees, so renaming it would only add a backward-compatibility
-// migration for zero benefit. busy/sustain are Bass-only (unused, but
-// still saved/loaded, for Drone/Spark/Haze).
+// motion/complexity keep their original field names even though Bass's and
+// Ambient's own controls (built on these same VoiceModel fields) are now
+// labeled Groove/Wander or Speed/Complexity — the serialized name is an
+// internal identifier, not something a user sees, so renaming it would
+// only add a backward-compatibility migration for zero benefit. busy/
+// sustain/attack are Bass-only, cleanliness is Ambient-only (unused, but
+// still saved/loaded, for the other voices).
 struct VoiceSceneState {
     bool enabled = true;
     float volume = 0.0f;
@@ -29,6 +30,8 @@ struct VoiceSceneState {
     int rootSemitoneOffset = 0;
     float busy = 0.5f;
     float sustain = 0.5f;
+    float cleanliness = 0.5f;
+    float attack = 0.5f;
     bool volumeEvoEnabled = true;
     bool pitchRangeEvoEnabled = true;
     bool timbreEvoEnabled = true;
@@ -37,6 +40,8 @@ struct VoiceSceneState {
     bool dissonanceEvoEnabled = true;
     bool busyEvoEnabled = true;
     bool sustainEvoEnabled = true;
+    bool cleanlinessEvoEnabled = true;
+    bool attackEvoEnabled = true;
 };
 
 struct SceneState {
@@ -70,12 +75,15 @@ inline bool operator==(const VoiceSceneState& a, const VoiceSceneState& b) {
            nearlyEqual(a.timbre, b.timbre) && nearlyEqual(a.motion, b.motion) &&
            nearlyEqual(a.complexity, b.complexity) && nearlyEqual(a.dissonance, b.dissonance) &&
            a.rootSemitoneOffset == b.rootSemitoneOffset && nearlyEqual(a.busy, b.busy) &&
-           nearlyEqual(a.sustain, b.sustain) && a.volumeEvoEnabled == b.volumeEvoEnabled &&
+           nearlyEqual(a.sustain, b.sustain) && nearlyEqual(a.cleanliness, b.cleanliness) &&
+           nearlyEqual(a.attack, b.attack) && a.volumeEvoEnabled == b.volumeEvoEnabled &&
            a.pitchRangeEvoEnabled == b.pitchRangeEvoEnabled &&
            a.timbreEvoEnabled == b.timbreEvoEnabled && a.motionEvoEnabled == b.motionEvoEnabled &&
            a.complexityEvoEnabled == b.complexityEvoEnabled &&
            a.dissonanceEvoEnabled == b.dissonanceEvoEnabled &&
-           a.busyEvoEnabled == b.busyEvoEnabled && a.sustainEvoEnabled == b.sustainEvoEnabled;
+           a.busyEvoEnabled == b.busyEvoEnabled && a.sustainEvoEnabled == b.sustainEvoEnabled &&
+           a.cleanlinessEvoEnabled == b.cleanlinessEvoEnabled &&
+           a.attackEvoEnabled == b.attackEvoEnabled;
 }
 
 inline bool operator==(const SceneState& a, const SceneState& b) {

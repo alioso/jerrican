@@ -89,6 +89,8 @@ public:
             file << prefix << "rootSemitoneOffset=" << voice.rootSemitoneOffset << "\n";
             file << prefix << "busy=" << voice.busy << "\n";
             file << prefix << "sustain=" << voice.sustain << "\n";
+            file << prefix << "cleanliness=" << voice.cleanliness << "\n";
+            file << prefix << "attack=" << voice.attack << "\n";
             file << prefix << "volumeEvoEnabled=" << (voice.volumeEvoEnabled ? 1 : 0) << "\n";
             file << prefix << "pitchRangeEvoEnabled=" << (voice.pitchRangeEvoEnabled ? 1 : 0) << "\n";
             file << prefix << "timbreEvoEnabled=" << (voice.timbreEvoEnabled ? 1 : 0) << "\n";
@@ -97,6 +99,8 @@ public:
             file << prefix << "dissonanceEvoEnabled=" << (voice.dissonanceEvoEnabled ? 1 : 0) << "\n";
             file << prefix << "busyEvoEnabled=" << (voice.busyEvoEnabled ? 1 : 0) << "\n";
             file << prefix << "sustainEvoEnabled=" << (voice.sustainEvoEnabled ? 1 : 0) << "\n";
+            file << prefix << "cleanlinessEvoEnabled=" << (voice.cleanlinessEvoEnabled ? 1 : 0) << "\n";
+            file << prefix << "attackEvoEnabled=" << (voice.attackEvoEnabled ? 1 : 0) << "\n";
         }
         file << "global.evolutionAmount=" << state.evolutionAmount << "\n";
         file << "global.evolutionSpeed=" << state.evolutionSpeed << "\n";
@@ -196,6 +200,8 @@ private:
         else if (field == "rootSemitoneOffset") voice.rootSemitoneOffset = static_cast<int>(value);
         else if (field == "busy") voice.busy = value;
         else if (field == "sustain") voice.sustain = value;
+        else if (field == "cleanliness") voice.cleanliness = value;
+        else if (field == "attack") voice.attack = value;
         else if (field == "volumeEvoEnabled") voice.volumeEvoEnabled = boolValue;
         else if (field == "pitchRangeEvoEnabled") voice.pitchRangeEvoEnabled = boolValue;
         else if (field == "timbreEvoEnabled") voice.timbreEvoEnabled = boolValue;
@@ -204,6 +210,8 @@ private:
         else if (field == "dissonanceEvoEnabled") voice.dissonanceEvoEnabled = boolValue;
         else if (field == "busyEvoEnabled") voice.busyEvoEnabled = boolValue;
         else if (field == "sustainEvoEnabled") voice.sustainEvoEnabled = boolValue;
+        else if (field == "cleanlinessEvoEnabled") voice.cleanlinessEvoEnabled = boolValue;
+        else if (field == "attackEvoEnabled") voice.attackEvoEnabled = boolValue;
     }
 
     std::filesystem::path directory_;

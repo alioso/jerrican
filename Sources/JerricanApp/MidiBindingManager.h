@@ -21,13 +21,15 @@
 // exception to "apply to the focused voice" — they're global actions,
 // same as Play/Stop/Reset/Randomize's on-screen buttons.
 enum class MidiTarget {
-    // Per-voice (17): applies to the focused voice. VoiceMotion/
-    // VoiceComplexity keep their original identity/name (still exactly
-    // "Motion"/"Complexity" for Drone/Spark/Haze) even though Bass's own
-    // knobs for the same underlying VoiceModel fields are now labeled
-    // Groove/Wander — same precedent as Marmite's VoiceChaos staying the
-    // canonical MIDI target name while its on-card label reads "Busy".
-    // VoiceBusy/VoiceSustain are Bass-only; see JerricanProcessor.h's
+    // Per-voice (21): applies to the focused voice. VoiceMotion/
+    // VoiceComplexity/VoiceTimbre keep their original identity/name
+    // (still exactly "Motion"/"Complexity"/"Timbre" for Spark/Haze) even
+    // though Bass's and Ambient's own knobs for the same underlying
+    // VoiceModel fields are now labeled Groove/Wander/Material or
+    // Speed/Complexity/Material — same precedent as Marmite's VoiceChaos
+    // staying the canonical MIDI target name while its on-card label
+    // reads "Busy". VoiceBusy/VoiceSustain/VoiceAttack are Bass-only,
+    // VoiceCleanliness is Ambient-only; see JerricanProcessor.h's
     // applyMidiTarget for the no-op-when-a-different-voice-is-focused
     // behavior.
     VoicePitchCenter,
@@ -38,6 +40,8 @@ enum class MidiTarget {
     VoiceDissonance,
     VoiceBusy,
     VoiceSustain,
+    VoiceCleanliness,
+    VoiceAttack,
     VoiceEnabledToggle,
     VoicePitchRangeEvoToggle,
     VoiceVolumeEvoToggle,
@@ -47,6 +51,8 @@ enum class MidiTarget {
     VoiceDissonanceEvoToggle,
     VoiceBusyEvoToggle,
     VoiceSustainEvoToggle,
+    VoiceCleanlinessEvoToggle,
+    VoiceAttackEvoToggle,
     // Voice focus (4).
     SelectVoice1,
     SelectVoice2,
@@ -67,7 +73,7 @@ enum class MidiTarget {
     Meter,
 };
 
-inline constexpr std::array<MidiTarget, 32> kAllMidiTargets{
+inline constexpr std::array<MidiTarget, 36> kAllMidiTargets{
     MidiTarget::VoicePitchCenter,
     MidiTarget::VoiceVolume,
     MidiTarget::VoiceTimbre,
@@ -76,6 +82,8 @@ inline constexpr std::array<MidiTarget, 32> kAllMidiTargets{
     MidiTarget::VoiceDissonance,
     MidiTarget::VoiceBusy,
     MidiTarget::VoiceSustain,
+    MidiTarget::VoiceCleanliness,
+    MidiTarget::VoiceAttack,
     MidiTarget::VoiceEnabledToggle,
     MidiTarget::VoicePitchRangeEvoToggle,
     MidiTarget::VoiceVolumeEvoToggle,
@@ -85,6 +93,8 @@ inline constexpr std::array<MidiTarget, 32> kAllMidiTargets{
     MidiTarget::VoiceDissonanceEvoToggle,
     MidiTarget::VoiceBusyEvoToggle,
     MidiTarget::VoiceSustainEvoToggle,
+    MidiTarget::VoiceCleanlinessEvoToggle,
+    MidiTarget::VoiceAttackEvoToggle,
     MidiTarget::SelectVoice1,
     MidiTarget::SelectVoice2,
     MidiTarget::SelectVoice3,
@@ -114,6 +124,8 @@ inline const char* midiTargetName(MidiTarget target) {
         case MidiTarget::VoiceDissonance: return "VoiceDissonance";
         case MidiTarget::VoiceBusy: return "VoiceBusy";
         case MidiTarget::VoiceSustain: return "VoiceSustain";
+        case MidiTarget::VoiceCleanliness: return "VoiceCleanliness";
+        case MidiTarget::VoiceAttack: return "VoiceAttack";
         case MidiTarget::VoiceEnabledToggle: return "VoiceEnabledToggle";
         case MidiTarget::VoicePitchRangeEvoToggle: return "VoicePitchRangeEvoToggle";
         case MidiTarget::VoiceVolumeEvoToggle: return "VoiceVolumeEvoToggle";
@@ -123,6 +135,8 @@ inline const char* midiTargetName(MidiTarget target) {
         case MidiTarget::VoiceDissonanceEvoToggle: return "VoiceDissonanceEvoToggle";
         case MidiTarget::VoiceBusyEvoToggle: return "VoiceBusyEvoToggle";
         case MidiTarget::VoiceSustainEvoToggle: return "VoiceSustainEvoToggle";
+        case MidiTarget::VoiceCleanlinessEvoToggle: return "VoiceCleanlinessEvoToggle";
+        case MidiTarget::VoiceAttackEvoToggle: return "VoiceAttackEvoToggle";
         case MidiTarget::SelectVoice1: return "SelectVoice1";
         case MidiTarget::SelectVoice2: return "SelectVoice2";
         case MidiTarget::SelectVoice3: return "SelectVoice3";
