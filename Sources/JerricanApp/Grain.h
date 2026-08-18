@@ -92,10 +92,23 @@ public:
         // 0 = a slow, soft swell in ("None" of a hard attack); 1 = an
         // almost-instant, hard pluck — turning the knob up adds more
         // attack, the same "more of the named effect" direction Dirt
-        // already uses. lerp is capped inside bassEnvelope so a very slow
-        // attack can't eat an entire short/punchy (low Sustain) note.
+        // already uses. A straight linear lerp between 350ms and 4.5ms
+        // spent most of the knob's travel still sounding slow (the
+        // midpoint landed around 177ms) — but a full logarithmic mapping
+        // overcorrected: since attackFrac's remainder is always spent on
+        // the same fixed, fairly fast exponential decay regardless of
+        // Attack, pushing every knob position past ~40% down into
+        // single-digit-ms attacks left almost the entire note already
+        // decaying, reading as quieter and less defined rather than more
+        // percussive. A gentle sqrt-shaped curve on the knob position
+        // (not on the ms value itself) reaches noticeably snappier times
+        // earlier than pure linear without collapsing most of the range
+        // into "already decaying". attackFrac is still capped inside
+        // bassEnvelope so a very slow attack can't eat an entire short/
+        // punchy (low Sustain) note.
         const float clampedAttack = std::max(0.0f, std::min(1.0f, attack));
-        attackMs_ = lerp(kBassAttackMaxMs, kBassAttackMinMs, clampedAttack);
+        const float shapedAttack = std::sqrt(clampedAttack);
+        attackMs_ = lerp(kBassAttackMaxMs, kBassAttackMinMs, shapedAttack);
 
         beginLife(sampleRate, pitch, durationMs, pan, character);
         // A closing filter sweep paired with a decaying amplitude
