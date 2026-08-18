@@ -16,22 +16,32 @@
 // the UI thread) — the UI only ever passes in the current macro values by
 // value each call.
 //
-// Spark/Haze use renderSample() exactly as before — continuous stochastic
+// Spark uses renderSample() exactly as before — continuous stochastic
 // grain spawning driven by Motion (pitch drift retarget rate) and
-// Complexity (grain density). Ambient uses renderAmbientSample() — Speed
-// directly scales grain duration (see maybeSpawnAmbientGrain; this is the
-// dominant driver of how fast an ambient pad feels like it's evolving,
-// unlike Spark/Haze where Motion only nudges a hidden pitch-drift retarget
+// Complexity (grain density). Ambient uses renderAmbientSample() and Haze
+// uses renderHazeSample() — Speed/Drift (Motion relabeled) directly scale
+// grain duration (see maybeSpawnAmbientGrain/maybeSpawnHazeGrain; this is
+// the dominant driver of how fast either voice feels like it's evolving,
+// unlike Spark where Motion only nudges a hidden pitch-drift retarget
 // rate), Layers (Complexity relabeled) drives grain density — triggering
-// grains via Grain::triggerAmbient (Material/Cleanliness) instead of the
-// random pickWaveform lottery, and rendering via
-// renderActiveGrainsCorrelated (like Bass) since Ambient's long,
-// narrow-pitch-spread overlapping grains are correlated enough that the
-// plain sqrt(N) normalization let them hit the hard clamp and produce
-// audible digital-clipping crackle. Bass instead uses spawnGrainNow(),
-// called directly by JerricanAudioProcessor's metered scheduler (see
-// BassGroovePattern.h) — its rhythm comes entirely from the beat grid
-// now, with zero leftover stochastic spawning texture.
+// grains via Grain::triggerAmbient/triggerHaze instead of the random
+// pickWaveform lottery. Ambient renders via renderActiveGrainsCorrelated
+// (like Bass) since its long, narrow-pitch-spread overlapping grains are
+// correlated enough that the plain sqrt(N) normalization let them hit the
+// hard clamp and produce audible digital-clipping crackle; Haze also
+// renders via renderActiveGrainsCorrelated but pinned to wander=1.0, i.e.
+// the same sqrt(N) target renderActiveGrains uses — just reached via a
+// glide instead of instantly. Haze's fuzz stage (see triggerHaze) makes
+// heavily-saturated overlapping grains sum close to linearly and hit the
+// hard clamp several times a second as grain count fluctuates; snapping
+// the gain on every one of those hits was audible as a sharp "wave drop".
+// A fully-correlated (stronger) exponent was tried here previously and
+// produced its own audible "wave" duck/recover under long sustained
+// notes, so the exponent stays gentle — only the smoothing was worth
+// keeping. Bass instead uses
+// spawnGrainNow(), called directly by JerricanAudioProcessor's metered
+// scheduler (see BassGroovePattern.h) — its rhythm comes entirely from
+// the beat grid now, with zero leftover stochastic spawning texture.
 class GrainCloud {
 public:
     static constexpr int kMaxGrains = 24;
@@ -103,6 +113,45 @@ public:
                                    dissonance, cleanliness, rootSemitoneOffset);
         }
         return renderActiveGrainsCorrelated(volume, kAmbientCorrelationWander);
+    }
+
+    // Haze-only. Same shape as Ambient's renderAmbientSample: updateDrift()
+    // (pitch-drift retarget rate) still runs off Drift as a secondary
+    // texture, but Drift's primary, clearly audible effect is grain-
+    // duration scaling inside maybeSpawnHazeGrain — see there. `active`
+    // gates new-grain spawning the same way Ambient's does, separate from
+    // Layers' density floor, for the same stop/start reason.
+    Grain::StereoSample renderHazeSample(float pitchRangeLow, float pitchRangeHigh, float texture,
+                                          float drift, float complexity, float volume,
+                                          float dissonance, bool active,
+                                          int rootSemitoneOffset = 0) {
+        updateDrift(pitchRangeLow, pitchRangeHigh, drift);
+        if (active) {
+            maybeSpawnHazeGrain(pitchRangeLow, pitchRangeHigh, texture, drift, complexity,
+                                dissonance, rootSemitoneOffset);
+        }
+        // renderActiveGrainsCorrelated with wander pinned to 1.0 — NOT
+        // Ambient/Bass's stronger correlation exponents. Pinning wander=1
+        // makes normalizationExponent=0.5, i.e. exactly the same sqrt(N)
+        // target renderActiveGrains uses, so quiet/clean Haze playing
+        // behaves identically to the plain version (an earlier attempt at
+        // the fully-correlated variant here ducked/recovered audibly on
+        // every new grain onset under long sustained notes — that problem
+        // was the *exponent*, not the smoothing, so this keeps the gentle
+        // exponent and only borrows the smoothing). The smoothing is what
+        // Haze's fuzz stage actually needs: overlapping heavily-saturated
+        // grains sum close to linearly and can hit the hard clamp several
+        // times a second as grain count fluctuates, and renderActiveGrains'
+        // instant per-sample renormalization made every one of those hits
+        // audible as a sharp "wave drop". Gliding toward the same target
+        // instead smooths those drops into an inaudible level trend.
+        //
+        // No boost here (unlike Bass/Ambient) — a flat multiplier only
+        // makes the fuzz louder, not more saturated-sounding; the actual
+        // "Big Muff" character comes from Grain::triggerHaze's waveshape
+        // (hardClipBlend_/asymmetry_), not from gain staged at the pool
+        // level.
+        return renderActiveGrainsCorrelated(volume, 1.0f);
     }
 
     // Bass-only: places a grain immediately, bypassing the continuous
@@ -342,6 +391,46 @@ private:
         }
     }
 
+    // Haze-only equivalent of maybeSpawnAmbientGrain — same shape: Layers
+    // floored above true zero, its own (Haze-specific) density ceiling
+    // since its grains also last seconds each, and Drift scaling grain
+    // duration as the dominant audible effect (kHazeSlowDurationMultiple
+    // stretches Drift=0 out relative to the configured/Drift=1 range).
+    void maybeSpawnHazeGrain(float low, float high, float texture, float drift, float complexity,
+                             float dissonance, int rootSemitoneOffset) {
+        const float clampedComplexity = std::max(0.0f, std::min(1.0f, complexity));
+        const float grainsPerSecond =
+            kMinHazeGrainsPerSecond +
+            clampedComplexity * (kMaxHazeGrainsPerSecond - kMinHazeGrainsPerSecond);
+        const float spawnProbabilityPerSample = grainsPerSecond / static_cast<float>(sampleRate_);
+        if (random_.nextFloat01() >= spawnProbabilityPerSample) {
+            return;
+        }
+
+        for (auto& grain : grains_) {
+            if (grain.isActive()) {
+                continue;
+            }
+
+            const float spread = (high - low) * localSpreadFraction;
+            const float lo = std::max(low, std::min(high, driftCenter_ - spread));
+            const float hi = std::max(low, std::min(high, driftCenter_ + spread));
+            const float rawPitch = random_.nextFloatRange(std::min(lo, hi), std::max(lo, hi));
+
+            const float quantizedPitch = HarmonicScale::quantize(rawPitch, rootSemitoneOffset);
+            const float pitch = quantizedPitch + (rawPitch - quantizedPitch) * dissonance;
+
+            const float clampedDrift = std::max(0.0f, std::min(1.0f, drift));
+            const float durationScale = lerp(kHazeSlowDurationMultiple, 1.0f, clampedDrift);
+            const float durationMs =
+                random_.nextFloatRange(minGrainDurationMs_, maxGrainDurationMs_) * durationScale;
+            const float pan = random_.nextFloat01();
+
+            grain.triggerHaze(sampleRate_, pitch, durationMs, pan, texture);
+            return;
+        }
+    }
+
     static float lerp(float a, float b, float t) { return a + (b - a) * t; }
 
     VoiceOscillator::Waveform pickWaveform(float timbre) {
@@ -391,6 +480,10 @@ private:
     // How much longer Speed=0 grains last than the configured (Speed=1)
     // min/maxGrainDurationMs_ range — see maybeSpawnAmbientGrain.
     static constexpr float kAmbientSlowDurationMultiple = 3.0f;
+    // Haze's own equivalents — see maybeSpawnHazeGrain/renderHazeSample.
+    static constexpr float kMinHazeGrainsPerSecond = 0.15f;
+    static constexpr float kMaxHazeGrainsPerSecond = 5.0f;
+    static constexpr float kHazeSlowDurationMultiple = 3.0f;
 
     double sampleRate_ = 44100.0;
     std::array<Grain, kMaxGrains> grains_;

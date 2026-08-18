@@ -116,8 +116,21 @@ public:
             "Dirt - how much grain/noise texture rides under the tone: 0 "
             "is pristine and clean, 1 is a dusty, tape-hiss-like character "
             "running continuously through the note.\n\n"
-            "SPARK / HAZE\n"
-            "The other two voices share one general-purpose control set: "
+            "HAZE\n"
+            "A synthetic, textured layer - deliberately not another clean "
+            "pad, it's meant to add a bit of grain against Bass and "
+            "Ambient's cleaner tones.\n"
+            "Texture - a tonal morph, Glow (soft, still a bit synthetic) "
+            "to Edge (bright, buzzy); always pitched, never collapses "
+            "into noise. Past about 80% a fuzz stage also kicks in, "
+            "ramping toward a thick, heavily saturated character by 1 - "
+            "the low-to-mid range is untouched by it.\n"
+            "Drift - how long each layer lasts before turning over; low "
+            "is slow-moving, high cycles noticeably faster.\n"
+            "Layers - how many notes are sounding at once, sparse to "
+            "dense.\n\n"
+            "SPARK\n"
+            "The remaining voice uses one general-purpose control set: "
             "Timbre - blends grain character, smooth to metallic/"
             "textured. Motion - how far the sampling point wanders within "
             "Pitch Range. Complexity - how dense the grain cloud is.\n\n"
@@ -354,6 +367,9 @@ public:
             } else if (i == 1) {
                 voiceRows_[i] = std::make_unique<AmbientVoiceRow>(processor_.voice(i),
                                                                    processor_.evolutionEngine(i), this);
+            } else if (i == 3) {
+                voiceRows_[i] = std::make_unique<HazeVoiceRow>(processor_.voice(i),
+                                                                processor_.evolutionEngine(i), this);
             } else {
                 voiceRows_[i] = std::make_unique<GenericVoiceRow>(processor_.voice(i),
                                                                    processor_.evolutionEngine(i), this);
@@ -1093,6 +1109,247 @@ private:
         juce::ToggleButton timbreEvoToggle_;
         juce::ToggleButton motionEvoToggle_;
         juce::ToggleButton complexityEvoToggle_;
+        juce::ToggleButton dissonanceEvoToggle_;
+    };
+
+    // Haze's bespoke card: same 5-knob-row + 6-toggle shape as
+    // GenericVoiceRow (still used by Spark) — only the labels and the
+    // underlying DSP meaning differ. Texture (relabels Timbre — same
+    // `timbre_` field, new DSP: an explicit tonal Glow<->Edge morph via
+    // Grain::triggerHaze, replacing the random pickWaveform lottery that
+    // made Timbre unpredictable and could accidentally collapse into a
+    // white-noise wash near 1). Drift (relabels Motion — same `groove_`
+    // field, new DSP: scales grain duration via
+    // GrainCloud::maybeSpawnHazeGrain, the dominant audible effect,
+    // mirroring Ambient's Speed fix — the old pitch-drift-retarget effect
+    // alone was too subtle to read as doing anything). Layers (relabels
+    // Complexity — same `wander_` field, same density mechanism, just
+    // named for what it actually is).
+    class HazeVoiceRow : public VoiceRowBase {
+    public:
+        HazeVoiceRow(VoiceModel& voice, EvolutionEngine& evolutionEngine,
+                    JerricanAudioProcessorEditor* owner)
+            : VoiceRowBase(voice, evolutionEngine, owner) {
+            setUpKnob(volumeSlider_, volumeLabel_, "Volume");
+            volumeSlider_.setValue(voiceRef_.getVolume());
+
+            setUpKnob(textureSlider_, textureLabel_, "Texture");
+            textureSlider_.setValue(voiceRef_.getTimbre());
+
+            setUpKnob(driftSlider_, driftLabel_, "Drift");
+            driftSlider_.setValue(voiceRef_.getGroove());
+
+            setUpKnob(layersSlider_, layersLabel_, "Layers");
+            layersSlider_.setValue(voiceRef_.getWander());
+
+            setUpKnob(dissonanceSlider_, dissonanceLabel_, "Dissonance");
+            dissonanceSlider_.setValue(voiceRef_.getDissonance());
+
+            addAndMakeVisible(evolutionSectionLabel_);
+            evolutionSectionLabel_.setText("Evolution", juce::dontSendNotification);
+            evolutionSectionLabel_.setFont(juce::Font(juce::FontOptions(11.0f)).withStyle(juce::Font::bold));
+            evolutionSectionLabel_.setColour(juce::Label::textColourId, JerricanTheme::evolutionAccent);
+            evolutionSectionLabel_.setJustificationType(juce::Justification::centredLeft);
+
+            for (size_t i = 0; i < kEvolutionToggleCount; ++i) {
+                setUpEvolutionCaption(*evolutionCaptionLabels()[i], kEvolutionCaptions[i]);
+                setUpEvolutionToggle(*evolutionToggles()[i]);
+            }
+        }
+
+        void resized() override {
+            constexpr int padding = 14;
+            const int contentWidth = getWidth() - padding * 2;
+            const int knobRowY = layoutHeader(padding, contentWidth);
+
+            constexpr int knobCount = 5;
+            const int knobColumnWidth = contentWidth / knobCount;
+            const int knobSize = std::min(84, knobColumnWidth - 12);
+            const int knobLabelHeight = 14;
+            const int knobTextBoxHeight = 16;
+
+            juce::Slider* knobs[knobCount] = {&volumeSlider_, &textureSlider_, &driftSlider_,
+                                               &layersSlider_, &dissonanceSlider_};
+            juce::Label* knobLabels[knobCount] = {&volumeLabel_, &textureLabel_, &driftLabel_,
+                                                   &layersLabel_, &dissonanceLabel_};
+
+            for (int i = 0; i < knobCount; ++i) {
+                const int columnX = padding + i * knobColumnWidth;
+                const int knobX = columnX + (knobColumnWidth - knobSize) / 2;
+                knobLabels[i]->setBounds(columnX, knobRowY, knobColumnWidth, knobLabelHeight);
+                knobs[i]->setBounds(knobX, knobRowY + knobLabelHeight + 2, knobSize,
+                                     knobSize + knobTextBoxHeight);
+            }
+
+            const int knobRowBottom = knobRowY + knobLabelHeight + 2 + knobSize + knobTextBoxHeight;
+            dividerY_ = knobRowBottom + 10;
+
+            const int evolutionLabelY = knobRowBottom + 16;
+            evolutionSectionLabel_.setBounds(padding, evolutionLabelY, 100, 14);
+
+            const int toggleRowY = evolutionLabelY + 18;
+            const int toggleColumnWidth = contentWidth / kEvolutionToggleCount;
+            constexpr int toggleCaptionHeight = 12;
+            constexpr int toggleSize = 16;
+
+            for (size_t i = 0; i < kEvolutionToggleCount; ++i) {
+                const int columnX = padding + static_cast<int>(i) * toggleColumnWidth;
+                evolutionCaptionLabels()[i]->setBounds(columnX, toggleRowY, toggleColumnWidth,
+                                                       toggleCaptionHeight);
+                const int toggleX = columnX + (toggleColumnWidth - toggleSize) / 2;
+                evolutionToggles()[i]->setBounds(toggleX, toggleRowY + toggleCaptionHeight + 2,
+                                                 toggleSize, toggleSize);
+            }
+        }
+
+        void buttonClicked(juce::Button* button) override {
+            if (handleBaseButtonClicked(button)) {
+                return;
+            }
+            if (button == &volumeEvoToggle_) {
+                const bool on = volumeEvoToggle_.getToggleState();
+                evolutionEngineRef_.setVolumeEnabled(on);
+                if (on) evolutionEngineRef_.resyncVolume(voiceRef_.getVolume());
+            } else if (button == &pitchRangeEvoToggle_) {
+                const bool on = pitchRangeEvoToggle_.getToggleState();
+                evolutionEngineRef_.setPitchRangeEnabled(on);
+                if (on) {
+                    evolutionEngineRef_.resyncPitchRange(voiceRef_.getPitchRangeLow(),
+                                                          voiceRef_.getPitchRangeHigh());
+                }
+            } else if (button == &textureEvoToggle_) {
+                const bool on = textureEvoToggle_.getToggleState();
+                evolutionEngineRef_.setTimbreEnabled(on);
+                if (on) evolutionEngineRef_.resyncTimbre(voiceRef_.getTimbre());
+            } else if (button == &driftEvoToggle_) {
+                const bool on = driftEvoToggle_.getToggleState();
+                evolutionEngineRef_.setGrooveEnabled(on);
+                if (on) evolutionEngineRef_.resyncGroove(voiceRef_.getGroove());
+            } else if (button == &layersEvoToggle_) {
+                const bool on = layersEvoToggle_.getToggleState();
+                evolutionEngineRef_.setWanderEnabled(on);
+                if (on) evolutionEngineRef_.resyncWander(voiceRef_.getWander());
+            } else if (button == &dissonanceEvoToggle_) {
+                const bool on = dissonanceEvoToggle_.getToggleState();
+                evolutionEngineRef_.setDissonanceEnabled(on);
+                if (on) evolutionEngineRef_.resyncDissonance(voiceRef_.getDissonance());
+            }
+        }
+
+        void sliderValueChanged(juce::Slider* slider) override {
+            if (handleBaseSliderChanged(slider)) {
+                return;
+            }
+            if (slider == &volumeSlider_) {
+                const float value = static_cast<float>(volumeSlider_.getValue());
+                voiceRef_.setVolume(value);
+                evolutionEngineRef_.resyncVolume(value);
+            } else if (slider == &textureSlider_) {
+                const float value = static_cast<float>(textureSlider_.getValue());
+                voiceRef_.setTimbre(value);
+                evolutionEngineRef_.resyncTimbre(value);
+            } else if (slider == &driftSlider_) {
+                const float value = static_cast<float>(driftSlider_.getValue());
+                voiceRef_.setGroove(value);
+                evolutionEngineRef_.resyncGroove(value);
+            } else if (slider == &layersSlider_) {
+                const float value = static_cast<float>(layersSlider_.getValue());
+                voiceRef_.setWander(value);
+                evolutionEngineRef_.resyncWander(value);
+            } else if (slider == &dissonanceSlider_) {
+                const float value = static_cast<float>(dissonanceSlider_.getValue());
+                voiceRef_.setDissonance(value);
+                evolutionEngineRef_.resyncDissonance(value);
+            }
+
+            if (owner_ != nullptr) {
+                owner_->updateStatusSummary();
+            }
+        }
+
+        void refreshFromModel() override {
+            VoiceRowBase::refreshFromModel();
+            if (!volumeSlider_.isMouseButtonDown()) {
+                volumeSlider_.setValue(voiceRef_.getVolume(), juce::dontSendNotification);
+            }
+            if (!textureSlider_.isMouseButtonDown()) {
+                textureSlider_.setValue(voiceRef_.getTimbre(), juce::dontSendNotification);
+            }
+            if (!driftSlider_.isMouseButtonDown()) {
+                driftSlider_.setValue(voiceRef_.getGroove(), juce::dontSendNotification);
+            }
+            if (!layersSlider_.isMouseButtonDown()) {
+                layersSlider_.setValue(voiceRef_.getWander(), juce::dontSendNotification);
+            }
+            if (!dissonanceSlider_.isMouseButtonDown()) {
+                dissonanceSlider_.setValue(voiceRef_.getDissonance(), juce::dontSendNotification);
+            }
+        }
+
+        void resetEvolutionToggles() override {
+            for (auto* toggle : evolutionToggles()) {
+                toggle->setToggleState(true, juce::dontSendNotification);
+            }
+            evolutionEngineRef_.setVolumeEnabled(true);
+            evolutionEngineRef_.setPitchRangeEnabled(true);
+            evolutionEngineRef_.setTimbreEnabled(true);
+            evolutionEngineRef_.setGrooveEnabled(true);
+            evolutionEngineRef_.setWanderEnabled(true);
+            evolutionEngineRef_.setDissonanceEnabled(true);
+        }
+
+        void refreshEvolutionToggles() override {
+            volumeEvoToggle_.setToggleState(evolutionEngineRef_.isVolumeEnabled(),
+                                            juce::dontSendNotification);
+            pitchRangeEvoToggle_.setToggleState(evolutionEngineRef_.isPitchRangeEnabled(),
+                                                juce::dontSendNotification);
+            textureEvoToggle_.setToggleState(evolutionEngineRef_.isTimbreEnabled(),
+                                             juce::dontSendNotification);
+            driftEvoToggle_.setToggleState(evolutionEngineRef_.isGrooveEnabled(),
+                                           juce::dontSendNotification);
+            layersEvoToggle_.setToggleState(evolutionEngineRef_.isWanderEnabled(),
+                                            juce::dontSendNotification);
+            dissonanceEvoToggle_.setToggleState(evolutionEngineRef_.isDissonanceEnabled(),
+                                                juce::dontSendNotification);
+        }
+
+    private:
+        static constexpr int kEvolutionToggleCount = 6;
+        static constexpr const char* kEvolutionCaptions[kEvolutionToggleCount] = {
+            "Volume", "Range", "Texture", "Drift", "Layers", "Dissonance"};
+
+        std::array<juce::Label*, kEvolutionToggleCount> evolutionCaptionLabels() {
+            return {&volumeEvoLabel_, &pitchRangeEvoLabel_, &textureEvoLabel_, &driftEvoLabel_,
+                    &layersEvoLabel_, &dissonanceEvoLabel_};
+        }
+
+        std::array<juce::ToggleButton*, kEvolutionToggleCount> evolutionToggles() {
+            return {&volumeEvoToggle_,     &pitchRangeEvoToggle_, &textureEvoToggle_,
+                    &driftEvoToggle_,      &layersEvoToggle_,     &dissonanceEvoToggle_};
+        }
+
+        juce::Label volumeLabel_;
+        juce::Label textureLabel_;
+        juce::Label driftLabel_;
+        juce::Label layersLabel_;
+        juce::Label dissonanceLabel_;
+        juce::Slider volumeSlider_;
+        juce::Slider textureSlider_;
+        juce::Slider driftSlider_;
+        juce::Slider layersSlider_;
+        juce::Slider dissonanceSlider_;
+        juce::Label evolutionSectionLabel_;
+        juce::Label volumeEvoLabel_;
+        juce::Label pitchRangeEvoLabel_;
+        juce::Label textureEvoLabel_;
+        juce::Label driftEvoLabel_;
+        juce::Label layersEvoLabel_;
+        juce::Label dissonanceEvoLabel_;
+        juce::ToggleButton volumeEvoToggle_;
+        juce::ToggleButton pitchRangeEvoToggle_;
+        juce::ToggleButton textureEvoToggle_;
+        juce::ToggleButton driftEvoToggle_;
+        juce::ToggleButton layersEvoToggle_;
         juce::ToggleButton dissonanceEvoToggle_;
     };
 
@@ -2159,8 +2416,8 @@ private:
             switch (target) {
                 case MidiTarget::VoicePitchCenter: return "Pitch Range";
                 case MidiTarget::VoiceVolume: return "Volume";
-                case MidiTarget::VoiceTimbre: return "Timbre / Dirt / Material";
-                case MidiTarget::VoiceMotion: return "Motion / Groove / Speed";
+                case MidiTarget::VoiceTimbre: return "Timbre / Dirt / Material / Texture";
+                case MidiTarget::VoiceMotion: return "Motion / Groove / Speed / Drift";
                 case MidiTarget::VoiceComplexity: return "Complexity / Wander / Layers";
                 case MidiTarget::VoiceDissonance: return "Dissonance";
                 case MidiTarget::VoiceBusy: return "Busy (Bass)";
@@ -2174,8 +2431,8 @@ private:
                 case MidiTarget::VoiceEnabledToggle: return "Enabled toggle";
                 case MidiTarget::VoicePitchRangeEvoToggle: return "Evolve: Pitch Range";
                 case MidiTarget::VoiceVolumeEvoToggle: return "Evolve: Volume";
-                case MidiTarget::VoiceTimbreEvoToggle: return "Evolve: Timbre / Dirt / Material";
-                case MidiTarget::VoiceMotionEvoToggle: return "Evolve: Motion / Groove / Speed";
+                case MidiTarget::VoiceTimbreEvoToggle: return "Evolve: Timbre / Dirt / Material / Texture";
+                case MidiTarget::VoiceMotionEvoToggle: return "Evolve: Motion / Groove / Speed / Drift";
                 case MidiTarget::VoiceComplexityEvoToggle: return "Evolve: Complexity / Wander / Layers";
                 case MidiTarget::VoiceDissonanceEvoToggle: return "Evolve: Dissonance";
                 case MidiTarget::VoiceBusyEvoToggle: return "Evolve: Busy (Bass)";

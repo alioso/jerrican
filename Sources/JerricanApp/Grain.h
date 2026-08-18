@@ -193,6 +193,83 @@ public:
         ambientFilterState_ = 0.0f;
     }
 
+    // Haze-only: an explicit morph across "texture" — Glow (mostly Sine,
+    // a touch of FM for a bit of synthetic edge even at 0 — Haze's own
+    // identity, distinct from Ambient's pure-sine Glass) -> Edge
+    // (Saw+FM-heavy, bright/buzzy) — rather than trigger()'s random
+    // pickWaveform lottery. That lottery is what made Timbre feel
+    // unpredictable and, worse, let Timbre drift into a majority-Noise
+    // pick near 1 — an accidental white-noise "ocean" wash nobody asked
+    // for. Texture never touches Noise at all: it stays a deliberate,
+    // fully tonal/pitched morph across Sine/Saw/FM at every setting, so
+    // there's nothing left to accidentally collapse into a wash. Above
+    // kHazeFuzzThreshold, a tanh fuzz stage also kicks in — inert (and
+    // therefore identical to before) below the threshold, ramping up
+    // hard toward a thick, Big-Muff-style saturated character by 1.0.
+    void triggerHaze(double sampleRate, float pitch, float durationMs, float pan, float texture) {
+        sineOscillator_.setWaveform(VoiceOscillator::Waveform::Sine);
+        sineOscillator_.setSampleRate(sampleRate);
+        sineOscillator_.reset();
+        sawOscillator_.setWaveform(VoiceOscillator::Waveform::Saw);
+        sawOscillator_.setSampleRate(sampleRate);
+        sawOscillator_.reset();
+        fmOscillator_.setWaveform(VoiceOscillator::Waveform::Fm);
+        fmOscillator_.setSampleRate(sampleRate);
+        fmOscillator_.reset();
+        mode_ = RenderMode::HazeBlend;
+
+        const float clampedTexture = std::max(0.0f, std::min(1.0f, texture));
+        hazeSineWeight_ = lerp(kHazeGlowSineWeight, 0.0f, clampedTexture);
+        hazeFmWeight_ = lerp(kHazeGlowFmWeight, kHazeEdgeFmWeight, clampedTexture);
+        hazeSawWeight_ = lerp(0.0f, kHazeEdgeSawWeight, clampedTexture);
+
+        // sqrt-shaped, not linear, so the fuzz reaches most of its
+        // intensity well before 100% rather than only arriving right at
+        // the very top of the knob's travel.
+        const float rawFuzzAmount = std::max(
+            0.0f, (clampedTexture - kHazeFuzzThreshold) / (1.0f - kHazeFuzzThreshold));
+        const float fuzzAmount = std::sqrt(rawFuzzAmount);
+        hazeDriveAmount_ = lerp(kHazeMinDrive, kHazeMaxDrive, fuzzAmount);
+        hazeLoudnessCompensation_ = lerp(1.0f, kHazeMaxDriveLoudnessCompensation, fuzzAmount);
+        // Both bounded to the same ±1 ceiling as the tanh stage — these
+        // change the *shape* of the clip, not its loudness. hardClipBlend_
+        // mixes in a hard-cornered clip: tanh's transition band never
+        // truly disappears no matter how hard it's driven (tanh(35) and
+        // tanh(60) are both ~1 — past a point, more drive stops changing
+        // anything audible), so pushing drive alone plateaus in perceived
+        // character. A hard clip has none of that — its corner is a sharp
+        // discontinuity regardless of drive, which is what actually reads
+        // as buzzy/fuzzy rather than just "warm." asymmetry_ offsets the
+        // signal before clipping so the positive and negative halves clip
+        // at different points — real transistor/diode fuzz circuits are
+        // never perfectly symmetric, and that asymmetry is what generates
+        // even-order harmonics (the "buzz" component) on top of tanh's
+        // odd-only harmonics.
+        hazeHardClipBlend_ = lerp(0.0f, kHazeMaxHardClipBlend, fuzzAmount);
+        hazeAsymmetry_ = lerp(0.0f, kHazeMaxAsymmetry, fuzzAmount);
+        hazeFuzzFilterState_ = 0.0f;
+
+        beginLife(sampleRate, pitch, durationMs, pan, Character::Ambient);
+
+        // Computed after beginLife so fundamentalHz_ is set. VoiceOscillator's
+        // Saw is a naive, non-band-limited oscillator — it already carries
+        // aliased (inharmonic, wrapped-around) high-frequency content.
+        // Driving that straight into heavy gain and hard tanh clipping
+        // massively amplifies the aliasing and folds it into new,
+        // dissonant intermodulation garbage — audibly "weird artifacts",
+        // not a musical fuzz. Real analog fuzz pedals only ever see a
+        // band-limited signal to begin with; this filter — applied
+        // *before* the waveshaper, only as the fuzz stage engages —
+        // approximates that by taming the ultrasonic-ish content the
+        // distortion would otherwise turn into noise, while still
+        // leaving real harmonic body for the saturation to work with.
+        const float fuzzFilterMultiple =
+            lerp(kHazeFuzzFilterOpenMultiple, kHazeFuzzFilterDarkMultiple, fuzzAmount);
+        const float fuzzCutoffHz = static_cast<float>(fundamentalHz_) * fuzzFilterMultiple;
+        hazeFuzzFilterCoefficient_ =
+            1.0f - std::exp(-twoPi * fuzzCutoffHz / static_cast<float>(sampleRate));
+    }
+
     bool isActive() const { return remainingLifeSamples_ > 0; }
 
     StereoSample renderSample() {
@@ -268,6 +345,29 @@ public:
                                   ambientNoiseWeight_ * noiseSample;
                 ambientFilterState_ += (raw - ambientFilterState_) * ambientFilterCoefficient_;
                 sample = ambientFilterState_;
+                break;
+            }
+            case RenderMode::HazeBlend: {
+                const float sineSample = sineOscillator_.renderSample(pitch_);
+                const float sawSample = sawOscillator_.renderSample(pitch_);
+                const float fmSample = fmOscillator_.renderSample(pitch_);
+                const float raw = hazeSineWeight_ * sineSample + hazeFmWeight_ * fmSample +
+                                  hazeSawWeight_ * sawSample;
+                // Filtered *before* the waveshaper — see triggerHaze —
+                // so the fuzz stage isn't distorting Saw's raw aliased
+                // content directly.
+                hazeFuzzFilterState_ +=
+                    (raw - hazeFuzzFilterState_) * hazeFuzzFilterCoefficient_;
+                // asymmetry_ before both clip stages (see triggerHaze) —
+                // even-order harmonic buzz. soft = the existing peak-
+                // normalized tanh; hard = a fixed-hardness clip whose
+                // corner sharpness doesn't soften as drive rises, blended
+                // in by hardClipBlend_ for the actual "fuzzy" edge.
+                const float biased = hazeFuzzFilterState_ + hazeAsymmetry_;
+                const float soft = std::tanh(biased * hazeDriveAmount_) / std::tanh(hazeDriveAmount_);
+                const float hard = std::max(-1.0f, std::min(1.0f, biased * kHazeHardClipDrive));
+                const float shaped = soft + (hard - soft) * hazeHardClipBlend_;
+                sample = shaped * hazeLoudnessCompensation_;
                 break;
             }
         }
@@ -371,6 +471,63 @@ private:
     // rather than a faint side effect.
     static constexpr float kAmbientFilterDarkMultiple = 1.3f;
     static constexpr float kAmbientFilterBrightMultiple = 13.0f;
+    // Haze's Texture blend endpoints (triggerHaze) — Glow (0) keeps a
+    // little FM for synthetic edge even at its cleanest; Edge (1) is
+    // Saw+FM heavy. Sine fades out completely by 1; FM is present at both
+    // ends (Haze's constant "a bit synthetic" identity); Saw only exists
+    // toward Edge. No Noise anywhere in this blend.
+    static constexpr float kHazeGlowSineWeight = 0.75f;
+    static constexpr float kHazeGlowFmWeight = 0.25f;
+    static constexpr float kHazeEdgeFmWeight = 0.55f;
+    static constexpr float kHazeEdgeSawWeight = 0.45f;
+    // Haze's fuzz stage — inert below this fraction of Texture (so "0
+    // stays the same" as before, matching the earlier Glow<->Edge-only
+    // design), then ramps from near-clean to a thick, heavily saturated
+    // Big-Muff-style drive by 1.0. Drive and loudness compensation are
+    // deliberately decoupled: drive controls how aggressively the
+    // waveform gets pushed toward tanh's ceiling (the actual distorted
+    // *character* — pushed far past Bass's Dirt ceiling of 9.0, this is
+    // meant to be properly fuzzed out), while compensation controls how
+    // much headroom margin is left for when several such grains overlap.
+    // That margin used to matter a lot more here than it did for Bass:
+    // heavily saturated, near-square-wave grains at similar pitches sum
+    // close to linearly rather than averaging out, so multiple overlapping
+    // fuzzed notes could exceed the render stage's hard safety clamp —
+    // audible as an unintended "limiter" clipping the mix. That's now
+    // handled structurally instead (GrainCloud::renderHazeSample glides
+    // toward its normalization target rather than snapping to it every
+    // sample, see there), which is what killed the audible "wave drops".
+    // Loudness compensation: 0.45 was measured (a standalone probe reading
+    // actual rendered samples directly, bypassing the whole plugin) to
+    // leave full fuzz's RMS at ~0.24 against clean Texture's ~0.46 — i.e.
+    // the fuzzed tone was quieter than clean, despite genuinely squarer
+    // waveshape (crest factor measured dropping from ~1.5 to ~1.3, real
+    // saturation). That's why cranking drive/curve params never seemed to
+    // land: the saturated character was present in the waveform but being
+    // turned down afterward, reading as timid rather than nasty. 0.85 is
+    // the level that loudness-matches clean rather than either burying it
+    // (0.45) or making the whole range louder than clean (0.9, tried and
+    // rejected earlier) — same level, more bite.
+    static constexpr float kHazeFuzzThreshold = 0.8f;
+    static constexpr float kHazeMinDrive = 0.02f;
+    static constexpr float kHazeMaxDrive = 35.0f;
+    static constexpr float kHazeMaxDriveLoudnessCompensation = 0.85f;
+    static constexpr float kHazeMaxHardClipBlend = 0.65f;
+    static constexpr float kHazeMaxAsymmetry = 0.18f;
+    static constexpr float kHazeHardClipDrive = 4.0f;
+    // Pre-distortion filter (triggerHaze) — barely engaged at fuzzAmount=0
+    // (20x fundamental is well above anything the fuzz stage's inert
+    // range would otherwise touch), closing down to a real lowpass at
+    // full fuzz to tame the naive Saw's aliased content before it hits
+    // heavy gain and clipping. 3.5x was too dark: it strangled off the
+    // buzzy upper-harmonic content that actually reads as an aggressive
+    // "Big Muff" character, leaving only a soft, rounded clip even with
+    // drive maxed out. 12x still removes the worst ultrasonic aliasing
+    // (it closes in well below Nyquist for anything in Haze's playable
+    // range) while leaving most of the harmonic buzz intact for the
+    // waveshaper to chew on.
+    static constexpr float kHazeFuzzFilterOpenMultiple = 20.0f;
+    static constexpr float kHazeFuzzFilterDarkMultiple = 12.0f;
 
     static float hannEnvelope(float t) { return 0.5f - 0.5f * std::cos(twoPi * t); }
 
@@ -430,7 +587,7 @@ private:
         return filterState_;
     }
 
-    enum class RenderMode { Single, BassBlend, AmbientBlend };
+    enum class RenderMode { Single, BassBlend, AmbientBlend, HazeBlend };
 
     VoiceOscillator oscillator_;       // used by trigger()
     VoiceOscillator sineOscillator_;   // used by triggerBlended()/triggerAmbient()
@@ -448,6 +605,15 @@ private:
     float ambientNoiseWeight_ = 0.0f;  // triggerAmbient() only
     float ambientFilterState_ = 0.0f;         // triggerAmbient() only
     float ambientFilterCoefficient_ = 1.0f;   // triggerAmbient() only
+    float hazeSineWeight_ = 0.0f;  // triggerHaze() only
+    float hazeFmWeight_ = 0.0f;    // triggerHaze() only
+    float hazeSawWeight_ = 0.0f;   // triggerHaze() only
+    float hazeDriveAmount_ = kHazeMinDrive;   // triggerHaze() only
+    float hazeLoudnessCompensation_ = 1.0f;   // triggerHaze() only
+    float hazeHardClipBlend_ = 0.0f;          // triggerHaze() only
+    float hazeAsymmetry_ = 0.0f;              // triggerHaze() only
+    float hazeFuzzFilterState_ = 0.0f;        // triggerHaze() only
+    float hazeFuzzFilterCoefficient_ = 1.0f;  // triggerHaze() only
     Character character_ = Character::Ambient;
     float pitch_ = 0.5f;
     double sampleRate_ = 44100.0;

@@ -502,8 +502,19 @@ public:
                         voice.getGroove(), voice.getWander(), voice.getVolume(), voice.getDissonance(),
                         voice.getCleanliness(), playing && voice.isEnabled(),
                         voice.getRootSemitoneOffset());
+                } else if (i == 3) {
+                    // Haze: Drift scales grain duration (GrainCloud::
+                    // maybeSpawnHazeGrain), Layers (Complexity relabeled)
+                    // drives grain density, Texture drives Grain::
+                    // triggerHaze's tone instead of the random
+                    // pickWaveform lottery Spark still uses. `active`
+                    // gates new-grain spawning, same reasoning as Ambient.
+                    voiceSample = cloud.renderHazeSample(
+                        voice.getPitchRangeLow(), voice.getPitchRangeHigh(), voice.getTimbre(),
+                        voice.getGroove(), voice.getWander(), voice.getVolume(), voice.getDissonance(),
+                        playing && voice.isEnabled(), voice.getRootSemitoneOffset());
                 } else {
-                    // Spark/Haze: unchanged continuous stochastic model.
+                    // Spark: unchanged continuous stochastic model.
                     // getGroove()/getWander() are the same underlying
                     // fields as the old Motion/Complexity (renamed at the
                     // VoiceModel level when Bass's redesign gave those
@@ -531,9 +542,15 @@ public:
             const float room = reverbRoom_.load(std::memory_order_relaxed);
             const float decay = reverbDecay_.load(std::memory_order_relaxed);
 
+            // dryLevel used to be a flat 0.5 regardless of Room — meaning
+            // even Room=0 ("no reverb") permanently cut the entire mix's
+            // volume in half with no wet signal to show for it. Crossfading
+            // it against wetLevel means Room=0 now genuinely passes the dry
+            // mix through untouched, and only trades dry for wet as Room
+            // rises.
             juce::Reverb::Parameters reverbParams;
             reverbParams.wetLevel = room * 0.5f;
-            reverbParams.dryLevel = 0.5f;
+            reverbParams.dryLevel = 1.0f - reverbParams.wetLevel;
             reverbParams.roomSize = juce::jlimit(0.0f, 1.0f, 0.25f + decay * 0.65f + room * 0.1f);
             reverbParams.damping = juce::jlimit(0.0f, 1.0f, 1.0f - decay * 0.75f);
             reverbParams.width = 1.0f;
