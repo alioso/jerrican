@@ -325,8 +325,12 @@ public:
     // deliberate v1 simplification, flagged as a likely follow-up once
     // this is audible): a detuned unison layer plus a light version of
     // the same tanh-saturation idiom Bass/Haze already use.
+    // `gain` is a flat per-grain multiplier — used by GrainCloud::
+    // spawnChordNow's Voicing control to fade harmony tones in/out
+    // relative to the melody tone (1.0 = full, unaffected, the same as
+    // before this parameter existed).
     void triggerSpark(double sampleRate, float pitch, float durationMs, float pan, float mode,
-                      float dirt) {
+                      float dirt, float gain = 1.0f) {
         sineOscillator_.setWaveform(VoiceOscillator::Waveform::Sine);
         sineOscillator_.setSampleRate(sampleRate);
         sineOscillator_.reset();
@@ -336,8 +340,12 @@ public:
         sparkDetuneOsc_.setWaveform(VoiceOscillator::Waveform::Sine);
         sparkDetuneOsc_.setSampleRate(sampleRate);
         sparkDetuneOsc_.reset();
+        noiseOscillator_.setWaveform(VoiceOscillator::Waveform::Noise);
+        noiseOscillator_.setSampleRate(sampleRate);
+        noiseOscillator_.reset();
         harmonicPhase_ = 0.0;
         mode_ = RenderMode::SparkChord;
+        sparkGain_ = gain;
 
         const float clampedMode = std::max(0.0f, std::min(1.0f, mode));
         if (clampedMode < 0.5f) {
@@ -351,6 +359,12 @@ public:
             sparkOrganWeight_ = 1.0f - u;
             sparkWurlitzerWeight_ = u;
         }
+        // Attack speed follows Mode, reusing the same weights: a struck
+        // piano hits near-instantly, a drawbar organ swells in slowly,
+        // Wurlitzer's tine attack sits between the two but nearer Piano's.
+        sparkAttackFraction_ = sparkPianoWeight_ * kSparkPianoAttackFraction +
+                               sparkOrganWeight_ * kSparkOrganAttackFraction +
+                               sparkWurlitzerWeight_ * kSparkWurlitzerAttackFraction;
 
         const float clampedDirt = std::max(0.0f, std::min(1.0f, dirt));
         sparkDirtDetuneWeight_ = lerp(0.0f, kSparkMaxDirtDetuneWeight, clampedDirt);
@@ -522,8 +536,19 @@ public:
                 const float pianoBrightness =
                     kSparkPianoSustainFloor +
                     (1.0f - kSparkPianoSustainFloor) * std::exp(-elapsedMs / kSparkPianoDecayMs);
+                // Hammer-strike transient — a fast-decaying filtered-noise
+                // burst layered onto the attack, same idiom as Bass's own
+                // pluck-click (see kCoreNoiseWeight/kNoiseDecayMs in
+                // triggerBlended). Without any broadband, non-tonal
+                // content at the onset, a struck-string instrument reads
+                // as a synth pad fading in, no matter how the tonal
+                // partials are shaped — this is the "hammer hitting a
+                // string" cue a pure sine+harmonic blend can't provide.
+                const float noiseSample = noiseOscillator_.renderSample(pitch_);
+                const float noiseEnvelope = std::exp(-elapsedMs / kSparkPianoNoiseDecayMs);
                 const float piano = kSparkPianoFundamentalWeight * sineSample +
-                                    kSparkPianoHarmonicWeight * pianoBrightness * secondHarmonic;
+                                    kSparkPianoHarmonicWeight * pianoBrightness * secondHarmonic +
+                                    kSparkPianoNoiseWeight * noiseEnvelope * noiseSample;
                 const float organ = 0.7f * sineSample + 0.3f * secondHarmonic;
                 const float wurlitzer = fmSample;
                 float raw = sparkPianoWeight_ * piano + sparkOrganWeight_ * organ +
@@ -535,7 +560,7 @@ public:
                 const float detuneSample = sparkDetuneOsc_.renderSample(pitch_ + kSparkDetuneAmount);
                 raw += detuneSample * sparkDirtDetuneWeight_;
                 sample = (std::tanh(raw * sparkDriveAmount_) / std::tanh(sparkDriveAmount_)) *
-                        sparkLoudnessCompensation_;
+                        sparkLoudnessCompensation_ * sparkGain_;
                 break;
             }
         }
@@ -546,6 +571,8 @@ public:
         float envelope;
         if (mode_ == RenderMode::BassBlend) {
             envelope = bassEnvelope(t, noteDurationMs_, attackMs_);
+        } else if (mode_ == RenderMode::SparkChord) {
+            envelope = percussiveEnvelope(t, sparkAttackFraction_);
         } else if (character_ == Character::Plucked) {
             envelope = percussiveEnvelope(t);
         } else {
@@ -757,14 +784,34 @@ private:
     static constexpr float kSparkPianoHarmonicWeight = 0.5f;
     static constexpr float kSparkPianoSustainFloor = 0.25f;
     static constexpr float kSparkPianoDecayMs = 220.0f;
+    // Piano's hammer-strike noise transient — short and fast-decaying
+    // (a real hammer/string attack, not sustained hiss), same shape as
+    // Bass's kNoiseDecayMs pluck-click.
+    static constexpr float kSparkPianoNoiseWeight = 0.35f;
+    static constexpr float kSparkPianoNoiseDecayMs = 35.0f;
+    // Attack speed by Mode (fraction of the note's own length spent
+    // ramping in — see render path's percussiveEnvelope(t, fraction)).
+    // Piano: near-instant, a real hammer strike. Wurlitzer: quick tine
+    // attack, a touch softer than Piano. Organ: a genuine slow swell.
+    static constexpr float kSparkPianoAttackFraction = 0.015f;
+    static constexpr float kSparkWurlitzerAttackFraction = 0.05f;
+    static constexpr float kSparkOrganAttackFraction = 0.35f;
 
     static float hannEnvelope(float t) { return 0.5f - 0.5f * std::cos(twoPi * t); }
 
-    static float percussiveEnvelope(float t) {
-        if (t < attackFraction) {
-            return t / attackFraction;
+    static float percussiveEnvelope(float t) { return percussiveEnvelope(t, attackFraction); }
+
+    // Parameterized version of the above — Spark uses this instead of the
+    // fixed-fraction one above, since a struck piano and a swelling organ
+    // genuinely have different attack speeds and the shared, fixed 0.15
+    // fraction was the same regardless of Mode (read as a generic,
+    // gradual "wavy fade-in" rather than any particular instrument's
+    // actual attack character).
+    static float percussiveEnvelope(float t, float customAttackFraction) {
+        if (t < customAttackFraction) {
+            return t / customAttackFraction;
         }
-        const float u = (t - attackFraction) / (1.0f - attackFraction);
+        const float u = (t - customAttackFraction) / (1.0f - customAttackFraction);
         return std::pow(1.0f - u, decayShape);
     }
 
@@ -861,6 +908,8 @@ private:
     float sparkDirtDetuneWeight_ = 0.0f;      // triggerSpark() only
     float sparkDriveAmount_ = 1.0f;           // triggerSpark() only
     float sparkLoudnessCompensation_ = 1.0f;  // triggerSpark() only
+    float sparkGain_ = 1.0f;                  // triggerSpark() only
+    float sparkAttackFraction_ = 0.15f;       // triggerSpark() only
     Character character_ = Character::Ambient;
     float pitch_ = 0.5f;
     double sampleRate_ = 44100.0;

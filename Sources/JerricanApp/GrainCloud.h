@@ -222,9 +222,27 @@ public:
     // semitone shift can never change which pitch classes are sounding,
     // so the key is now unconditionally stable regardless of Pitch
     // Range/Thickness/anything else.
+    // Voicing: melody<->chord, continuous like Mode. The tone that ends
+    // up highest in pitch (after the octave shift below — real keyboard
+    // voicings put the melody on top) always plays at full gain; the
+    // other 3 fade continuously between silent (Voicing=0, a genuine
+    // single-note melody line) and full (Voicing=1, today's full 4-voice
+    // chord) — every tone keeps sounding at every setting, just at
+    // different loudness, rather than discretely dropping notes in and
+    // out, matching the "similar to Mode" continuous-crossfade ask.
+    //
+    // The melody tone also gets a chance to wander off the fixed chord
+    // tone (probability 1-Voicing, so it always wanders at Voicing=0 and
+    // never at Voicing=1) — a static top note repeated every hit reads as
+    // mechanical, not a melodic line; a real improvised melody moves
+    // around. The wander target is freshly quantized to the same shared
+    // scale (HarmonicScale::quantize), never a continuous shift of the
+    // chord tone's own pitch — same reasoning as the octave-only register
+    // shift above: anything that isn't a discrete, scale-aware choice
+    // risks landing off the shared key again.
     void spawnChordNow(float pitchRangeLow, float pitchRangeHigh, float mode, float dirt,
-                       float thickness, float sustain, float dissonance, int degree,
-                       int rootSemitoneOffset) {
+                       float thickness, float sustain, float dissonance, float voicing,
+                       int degree, int rootSemitoneOffset) {
         const auto tones = ChordScale::chordTones(degree, /*seventh=*/true, rootSemitoneOffset,
                                                    thickness, dissonance, random_);
         const float low = std::min(pitchRangeLow, pitchRangeHigh);
@@ -241,6 +259,10 @@ public:
             std::round((rangeCenter - centroid) * kSemitonesPerRange / 12.0f);
         const float shift = octaveShiftCount * 12.0f / kSemitonesPerRange;
 
+        const std::size_t melodyIndex =
+            static_cast<std::size_t>(std::max_element(tones.begin(), tones.end()) - tones.begin());
+        const float clampedVoicing = std::max(0.0f, std::min(1.0f, voicing));
+
         const float clampedSustain = std::max(0.0f, std::min(1.0f, sustain));
         const float centerDurationMs =
             minGrainDurationMs_ + (maxGrainDurationMs_ - minGrainDurationMs_) * clampedSustain;
@@ -255,7 +277,14 @@ public:
                 continue;
             }
 
-            const float pitch = std::max(0.0f, std::min(1.0f, tones[toneIndex] + shift));
+            const float chordPitch = std::max(0.0f, std::min(1.0f, tones[toneIndex] + shift));
+            float pitch = chordPitch;
+            if (toneIndex == melodyIndex && random_.nextFloat01() >= clampedVoicing) {
+                const float rawWander =
+                    chordPitch + random_.nextFloatRange(-kMelodyWanderSpread, kMelodyWanderSpread);
+                pitch = HarmonicScale::quantize(std::max(0.0f, std::min(1.0f, rawWander)),
+                                                rootSemitoneOffset);
+            }
             const float durationMs = std::max(
                 10.0f, centerDurationMs + random_.nextFloatRange(-jitterRangeMs, jitterRangeMs));
             // Spreads the 4 tones across the stereo field (root/3rd left
@@ -263,8 +292,9 @@ public:
             // perfectly mechanical.
             const float basePan = 0.5f + (static_cast<float>(toneIndex) / 3.0f - 0.5f) * 0.4f;
             const float pan = basePan + random_.nextFloatRange(-0.05f, 0.05f);
+            const float gain = toneIndex == melodyIndex ? 1.0f : clampedVoicing;
 
-            grain.triggerSpark(sampleRate_, pitch, durationMs, pan, mode, dirt);
+            grain.triggerSpark(sampleRate_, pitch, durationMs, pan, mode, dirt, gain);
             ++toneIndex;
         }
     }
@@ -470,6 +500,10 @@ private:
     static constexpr float driftPickRateSpanHz = 0.45f;
     static constexpr float localSpreadFraction = 0.15f;
     static constexpr float kWanderSpreadFraction = 0.35f;
+    // Spark-only: how far the melody tone can wander from its chord tone
+    // when it does wander (see spawnChordNow) — roughly +/-3 semitones
+    // (0.06 * 48), a local roam, not a register jump.
+    static constexpr float kMelodyWanderSpread = 0.06f;
     // This gain follower is shared across the whole cloud's mixed output,
     // not per-grain — so on a long Sustain=1 note, every subsequent note
     // the pattern fires while the old one is still ringing changes the

@@ -282,10 +282,11 @@ public:
                     evolution.resyncSustain(value);
                 }
                 break;
-            // Bass's Attack, reused as Haze's Fuzz — see the Haze
-            // renderHazeSample call site.
+            // Bass's Attack, reused as Haze's Fuzz and Spark's Voicing —
+            // see the Haze renderHazeSample / Spark spawnChordNow call
+            // sites.
             case MidiTarget::VoiceAttack:
-                if (focused == 0 || focused == 3) {
+                if (focused == 0 || focused == 2 || focused == 3) {
                     voice.setAttack(value);
                     evolution.resyncAttack(value);
                 }
@@ -354,7 +355,7 @@ public:
                 break;
             }
             case MidiTarget::VoiceAttackEvoToggle: {
-                if (focused == 0 || focused == 3) {
+                if (focused == 0 || focused == 2 || focused == 3) {
                     const bool on = !evolution.isAttackEnabled();
                     evolution.setAttackEnabled(on);
                     if (on) evolution.resyncAttack(voice.getAttack());
@@ -552,16 +553,31 @@ public:
                     // Bass's slots, Cleanliness->Dirt from Ambient's slot);
                     // Thickness reuses the old Complexity/Wander slot
                     // (chord voicing register spread now, not grain
-                    // density — density comes from Busy instead).
+                    // density — density comes from Busy instead). Voicing
+                    // reuses Attack (Bass's envelope-shape slot, already
+                    // reused once for Haze's Fuzz — a third reuse here):
+                    // melody<->chord, see GrainCloud::spawnChordNow.
+                    //
+                    // getCleanliness() is inverted here (1-cleanliness) —
+                    // spawnChordNow's `dirt` parameter means "amount of
+                    // grit" (higher = more), the opposite polarity of
+                    // "cleanliness" (higher = purer). Ambient's own
+                    // triggerAmbient call below passes cleanliness_
+                    // un-inverted because its DSP is written in terms of
+                    // cleanliness directly; Spark's is written in terms of
+                    // dirt, so it needs the flip that the UI's display-only
+                    // inversion doesn't provide on its own — passing the
+                    // raw stored value here had Dirt backwards (turning
+                    // the knob up made the sound *cleaner*).
                     const auto trigger = sparkChordPattern_.update(
                         onGridBoundary, currentSlot16_, voice.getBusy(), voice.getGroove(),
                         evolutionAmount, patternClock_.getSamplesPerSubdivision());
                     if (trigger.has_value() && playing && voice.isEnabled()) {
                         cloud.spawnChordNow(voice.getPitchRangeLow(), voice.getPitchRangeHigh(),
-                                            voice.getTimbre(), voice.getCleanliness(),
+                                            voice.getTimbre(), 1.0f - voice.getCleanliness(),
                                             voice.getWander(), voice.getSustain(),
-                                            voice.getDissonance(), trigger->degree,
-                                            voice.getRootSemitoneOffset());
+                                            voice.getDissonance(), voice.getAttack(),
+                                            trigger->degree, voice.getRootSemitoneOffset());
                     }
                     // Thickness (getWander()) doubles as the correlation-
                     // wander input: tight/close voicings are more
@@ -774,13 +790,14 @@ public:
             // Bass+Spark: also reroll Busy/Sustain, their shared bespoke
             // slot — meaningless for Ambient/Haze, left untouched.
             // Ambient+Spark: same for Cleanliness (Dirt for Spark). Attack
-            // is Bass-only (envelope shape) *and* Haze-only (Fuzz amount).
+            // is Bass (envelope shape), Haze (Fuzz amount), *and* Spark
+            // (Voicing: melody<->chord).
             const float busy =
                 (i == 0 || i == 2) ? randomizeRandom_.nextFloat01() : voices_[i].getBusy();
             const float sustain =
                 (i == 0 || i == 2) ? randomizeRandom_.nextFloat01() : voices_[i].getSustain();
             const float attack =
-                (i == 0 || i == 3) ? randomizeRandom_.nextFloat01() : voices_[i].getAttack();
+                (i == 0 || i == 2 || i == 3) ? randomizeRandom_.nextFloat01() : voices_[i].getAttack();
             const float cleanliness =
                 (i == 1 || i == 2) ? randomizeRandom_.nextFloat01() : voices_[i].getCleanliness();
 
