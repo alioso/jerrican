@@ -593,12 +593,13 @@ private:
     // the level that loudness-matches clean rather than either burying it
     // (0.45) or making the whole range louder than clean (0.9, tried and
     // rejected earlier) — same level, more bite.
-    // TEMPORARY — deliberately maxed out past what's musically reasonable,
-    // per explicit request ("show me the most saturation you can do") so
-    // we can hear the actual ceiling of this architecture before deciding
-    // whether to dial back or push further with something structurally
-    // different (e.g. bitcrushing, wavefolding). hardClipBlend_ at 1.0
-    // means pure hard clip with zero tanh softening at max fuzz.
+    // Pushed all the way to the ceiling of this architecture — pure hard
+    // clip (hardClipBlend_ at 1.0, zero tanh softening left) at max fuzz,
+    // full makeup gain, strong asymmetry. Confirmed (by ear, at this exact
+    // setting) as the character that actually landed, once paired with
+    // the unison layer below — a single clipped oscillator never got
+    // there no matter how hard it was driven; several simultaneously
+    // clipped, detuned voices intermodulating is what did it.
     static constexpr float kHazeMinDrive = 0.02f;
     static constexpr float kHazeMaxDrive = 200.0f;
     static constexpr float kHazeMaxDriveLoudnessCompensation = 1.0f;
@@ -643,8 +644,9 @@ private:
     // typical guitar-cab high rolloff point; unlike the pre-distortion
     // filter above this is an absolute frequency, not fundamental-
     // relative — a real speaker's response doesn't move with the note.
-    // TEMPORARY — pushed wide open (effectively bypassed) for the "show
-    // me the ceiling" test so nothing softens the rawest possible clip.
+    // Left wide open (effectively bypassed) — with the unison layer doing
+    // the actual work of making this sound big, darkening it further on
+    // top wasn't needed and only softened the result.
     static constexpr float kHazeCabCutoffHz = 18000.0f;
 
     static float hannEnvelope(float t) { return 0.5f - 0.5f * std::cos(twoPi * t); }
