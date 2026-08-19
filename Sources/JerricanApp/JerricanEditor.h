@@ -679,6 +679,12 @@ private:
             nameLabel_.setColour(juce::Label::textColourId, JerricanTheme::textPrimary);
             nameLabel_.setText(voiceRef_.getName(), juce::dontSendNotification);
 
+            addAndMakeVisible(soloButton_);
+            soloButton_.setButtonText("S");
+            soloButton_.setName("soloToggle");
+            soloButton_.setToggleState(voiceRef_.isSoloed(), juce::dontSendNotification);
+            soloButton_.addListener(this);
+
             addAndMakeVisible(enabledButton_);
             enabledButton_.setButtonText("");
             enabledButton_.setToggleState(voiceRef_.isEnabled(), juce::dontSendNotification);
@@ -738,6 +744,9 @@ private:
             if (!enabledButton_.isMouseButtonDown()) {
                 enabledButton_.setToggleState(voiceRef_.isEnabled(), juce::dontSendNotification);
             }
+            if (!soloButton_.isMouseButtonDown()) {
+                soloButton_.setToggleState(voiceRef_.isSoloed(), juce::dontSendNotification);
+            }
             if (!pitchRangeSlider_.isMouseButtonDown()) {
                 pitchRangeSlider_.setMinAndMaxValues(voiceRef_.getPitchRangeLow(),
                                                       voiceRef_.getPitchRangeHigh(),
@@ -756,8 +765,9 @@ private:
         // Lays out the four shared controls; returns the y just below the
         // Pitch Range band, where a subclass's own knob row should start.
         int layoutHeader(int padding, int contentWidth) {
-            nameLabel_.setBounds(padding, padding, contentWidth - 30, 26);
+            nameLabel_.setBounds(padding, padding, contentWidth - 58, 26);
             enabledButton_.setBounds(getWidth() - padding - 22, padding + 2, 22, 22);
+            soloButton_.setBounds(getWidth() - padding - 22 - 6 - 22, padding + 2, 22, 22);
 
             const int pitchY = padding + 26 + 8;
             pitchRangeLabel_.setBounds(padding, pitchY, 160, 14);
@@ -779,6 +789,13 @@ private:
         bool handleBaseButtonClicked(juce::Button* button) {
             if (button == &enabledButton_) {
                 voiceRef_.setEnabled(enabledButton_.getToggleState());
+                if (owner_ != nullptr) {
+                    owner_->updateStatusSummary();
+                }
+                return true;
+            }
+            if (button == &soloButton_) {
+                voiceRef_.setSoloed(soloButton_.getToggleState());
                 if (owner_ != nullptr) {
                     owner_->updateStatusSummary();
                 }
@@ -863,12 +880,15 @@ private:
         juce::Label keyLabel_;
         juce::ComboBox rootCombo_;
         juce::ToggleButton enabledButton_;
+        juce::ToggleButton soloButton_;
         juce::Slider pitchRangeSlider_;
     };
 
-    // Drone/Spark/Haze's card: unchanged from before Bass's redesign — a
-    // row of five knobs (Volume, Timbre, Motion, Complexity, Dissonance)
-    // and a matching row of six Evolution toggles.
+    // Spark's card (the sole remaining user — Bass/Ambient/Haze each grew
+    // their own bespoke class): Volume alone left, Timbre/Motion/
+    // Complexity/Dissonance in a shared-column-width 2-row grid on the
+    // right, same template as Bass/Ambient/Haze use — see
+    // AmbientVoiceRow::resized() for the reference shape.
     class GenericVoiceRow : public VoiceRowBase {
     public:
         GenericVoiceRow(VoiceModel& voice, EvolutionEngine& evolutionEngine,
@@ -901,40 +921,78 @@ private:
             }
         }
 
+        // Same Volume-alone-left + shared-column-width 2-row grid template
+        // as Bass/Ambient/Haze — see AmbientVoiceRow::resized() for the
+        // reference shape this copies.
         void resized() override {
             constexpr int padding = 14;
             const int contentWidth = getWidth() - padding * 2;
-            const int knobRowY = layoutHeader(padding, contentWidth);
+            const int knobAreaTop = layoutHeader(padding, contentWidth);
 
-            constexpr int knobCount = 5;
-            const int knobColumnWidth = contentWidth / knobCount;
-            const int knobSize = std::min(84, knobColumnWidth - 12);
-            const int knobLabelHeight = 14;
-            const int knobTextBoxHeight = 16;
+            constexpr int knobLabelHeight = 14;
+            constexpr int knobTextBoxHeight = 16;
+            constexpr int rowGap = 8;
+            constexpr int toggleCaptionHeight = 12;
+            constexpr int toggleSize = 16;
+            constexpr int footerHeight = 10 + 16 + 18 + toggleCaptionHeight + 2 + toggleSize;
 
-            juce::Slider* knobs[knobCount] = {&volumeSlider_, &timbreSlider_, &motionSlider_,
-                                               &complexitySlider_, &dissonanceSlider_};
-            juce::Label* knobLabels[knobCount] = {&volumeLabel_, &timbreLabel_, &motionLabel_,
-                                                   &complexityLabel_, &dissonanceLabel_};
+            const int knobAreaHeight =
+                std::max(80, getHeight() - knobAreaTop - footerHeight - padding);
 
-            for (int i = 0; i < knobCount; ++i) {
-                const int columnX = padding + i * knobColumnWidth;
-                const int knobX = columnX + (knobColumnWidth - knobSize) / 2;
-                knobLabels[i]->setBounds(columnX, knobRowY, knobColumnWidth, knobLabelHeight);
-                knobs[i]->setBounds(knobX, knobRowY + knobLabelHeight + 2, knobSize,
-                                     knobSize + knobTextBoxHeight);
+            constexpr int leftColumnWidth = 96;
+            const int smallKnobSize = std::max(
+                32, (knobAreaHeight - rowGap - 2 * (knobLabelHeight + 2 + knobTextBoxHeight)) / 2);
+            const int volumeKnobSize = std::max(
+                smallKnobSize,
+                std::min(84, knobAreaHeight - knobLabelHeight - 2 - knobTextBoxHeight));
+
+            const int volumeBlockHeight = knobLabelHeight + 2 + volumeKnobSize + knobTextBoxHeight;
+            const int volumeTop = knobAreaTop + std::max(0, (knobAreaHeight - volumeBlockHeight) / 2);
+            volumeLabel_.setBounds(padding, volumeTop, leftColumnWidth, knobLabelHeight);
+            volumeSlider_.setBounds(padding + (leftColumnWidth - volumeKnobSize) / 2,
+                                    volumeTop + knobLabelHeight + 2, volumeKnobSize,
+                                    volumeKnobSize + knobTextBoxHeight);
+
+            const int rightX = padding + leftColumnWidth + 10;
+            const int rightWidth = contentWidth - leftColumnWidth - 10;
+            constexpr int gridCols = 3;
+            const int colWidth = rightWidth / gridCols;
+
+            juce::Slider* row1Knobs[gridCols] = {&timbreSlider_, &motionSlider_, &complexitySlider_};
+            juce::Label* row1Labels[gridCols] = {&timbreLabel_, &motionLabel_, &complexityLabel_};
+            for (int i = 0; i < gridCols; ++i) {
+                const int columnX = rightX + i * colWidth;
+                const int knobX = columnX + (colWidth - smallKnobSize) / 2;
+                row1Labels[i]->setBounds(columnX, knobAreaTop, colWidth, knobLabelHeight);
+                row1Knobs[i]->setBounds(knobX, knobAreaTop + knobLabelHeight + 2, smallKnobSize,
+                                        smallKnobSize + knobTextBoxHeight);
             }
 
-            const int knobRowBottom = knobRowY + knobLabelHeight + 2 + knobSize + knobTextBoxHeight;
-            dividerY_ = knobRowBottom + 10;
+            const int row1Bottom = knobAreaTop + knobLabelHeight + 2 + smallKnobSize + knobTextBoxHeight;
+            const int row2Y = row1Bottom + rowGap;
 
-            const int evolutionLabelY = knobRowBottom + 16;
+            // Only 1 control this row — shares row 1's column width and
+            // sits in column 0 rather than being re-centered, so it stays
+            // grid-aligned with row 1 above it.
+            constexpr int row2Count = 1;
+            juce::Slider* row2Knobs[row2Count] = {&dissonanceSlider_};
+            juce::Label* row2Labels[row2Count] = {&dissonanceLabel_};
+            for (int i = 0; i < row2Count; ++i) {
+                const int columnX = rightX + i * colWidth;
+                const int knobX = columnX + (colWidth - smallKnobSize) / 2;
+                row2Labels[i]->setBounds(columnX, row2Y, colWidth, knobLabelHeight);
+                row2Knobs[i]->setBounds(knobX, row2Y + knobLabelHeight + 2, smallKnobSize,
+                                        smallKnobSize + knobTextBoxHeight);
+            }
+
+            const int row2Bottom = row2Y + knobLabelHeight + 2 + smallKnobSize + knobTextBoxHeight;
+            dividerY_ = row2Bottom + 10;
+
+            const int evolutionLabelY = row2Bottom + 16;
             evolutionSectionLabel_.setBounds(padding, evolutionLabelY, 100, 14);
 
             const int toggleRowY = evolutionLabelY + 18;
             const int toggleColumnWidth = contentWidth / kEvolutionToggleCount;
-            constexpr int toggleCaptionHeight = 12;
-            constexpr int toggleSize = 16;
 
             for (size_t i = 0; i < kEvolutionToggleCount; ++i) {
                 const int columnX = padding + static_cast<int>(i) * toggleColumnWidth;
@@ -1161,40 +1219,77 @@ private:
             }
         }
 
+        // Same Volume-alone-left + shared-column-width 2-row grid template
+        // as Bass/Ambient — see AmbientVoiceRow::resized() for the
+        // reference shape this copies.
         void resized() override {
             constexpr int padding = 14;
             const int contentWidth = getWidth() - padding * 2;
-            const int knobRowY = layoutHeader(padding, contentWidth);
+            const int knobAreaTop = layoutHeader(padding, contentWidth);
 
-            constexpr int knobCount = 6;
-            const int knobColumnWidth = contentWidth / knobCount;
-            const int knobSize = std::min(84, knobColumnWidth - 12);
-            const int knobLabelHeight = 14;
-            const int knobTextBoxHeight = 16;
+            constexpr int knobLabelHeight = 14;
+            constexpr int knobTextBoxHeight = 16;
+            constexpr int rowGap = 8;
+            constexpr int toggleCaptionHeight = 12;
+            constexpr int toggleSize = 16;
+            constexpr int footerHeight = 10 + 16 + 18 + toggleCaptionHeight + 2 + toggleSize;
 
-            juce::Slider* knobs[knobCount] = {&volumeSlider_, &textureSlider_, &fuzzSlider_,
-                                               &driftSlider_, &layersSlider_, &dissonanceSlider_};
-            juce::Label* knobLabels[knobCount] = {&volumeLabel_,   &textureLabel_, &fuzzLabel_,
-                                                   &driftLabel_,   &layersLabel_,  &dissonanceLabel_};
+            const int knobAreaHeight =
+                std::max(80, getHeight() - knobAreaTop - footerHeight - padding);
 
-            for (int i = 0; i < knobCount; ++i) {
-                const int columnX = padding + i * knobColumnWidth;
-                const int knobX = columnX + (knobColumnWidth - knobSize) / 2;
-                knobLabels[i]->setBounds(columnX, knobRowY, knobColumnWidth, knobLabelHeight);
-                knobs[i]->setBounds(knobX, knobRowY + knobLabelHeight + 2, knobSize,
-                                     knobSize + knobTextBoxHeight);
+            constexpr int leftColumnWidth = 96;
+            const int smallKnobSize = std::max(
+                32, (knobAreaHeight - rowGap - 2 * (knobLabelHeight + 2 + knobTextBoxHeight)) / 2);
+            const int volumeKnobSize = std::max(
+                smallKnobSize,
+                std::min(84, knobAreaHeight - knobLabelHeight - 2 - knobTextBoxHeight));
+
+            const int volumeBlockHeight = knobLabelHeight + 2 + volumeKnobSize + knobTextBoxHeight;
+            const int volumeTop = knobAreaTop + std::max(0, (knobAreaHeight - volumeBlockHeight) / 2);
+            volumeLabel_.setBounds(padding, volumeTop, leftColumnWidth, knobLabelHeight);
+            volumeSlider_.setBounds(padding + (leftColumnWidth - volumeKnobSize) / 2,
+                                    volumeTop + knobLabelHeight + 2, volumeKnobSize,
+                                    volumeKnobSize + knobTextBoxHeight);
+
+            const int rightX = padding + leftColumnWidth + 10;
+            const int rightWidth = contentWidth - leftColumnWidth - 10;
+            constexpr int gridCols = 3;
+            const int colWidth = rightWidth / gridCols;
+
+            juce::Slider* row1Knobs[gridCols] = {&textureSlider_, &fuzzSlider_, &driftSlider_};
+            juce::Label* row1Labels[gridCols] = {&textureLabel_, &fuzzLabel_, &driftLabel_};
+            for (int i = 0; i < gridCols; ++i) {
+                const int columnX = rightX + i * colWidth;
+                const int knobX = columnX + (colWidth - smallKnobSize) / 2;
+                row1Labels[i]->setBounds(columnX, knobAreaTop, colWidth, knobLabelHeight);
+                row1Knobs[i]->setBounds(knobX, knobAreaTop + knobLabelHeight + 2, smallKnobSize,
+                                        smallKnobSize + knobTextBoxHeight);
             }
 
-            const int knobRowBottom = knobRowY + knobLabelHeight + 2 + knobSize + knobTextBoxHeight;
-            dividerY_ = knobRowBottom + 10;
+            const int row1Bottom = knobAreaTop + knobLabelHeight + 2 + smallKnobSize + knobTextBoxHeight;
+            const int row2Y = row1Bottom + rowGap;
 
-            const int evolutionLabelY = knobRowBottom + 16;
+            // Only 2 controls this row — shares row 1's column width so
+            // the two rows stay visually aligned, third column left empty.
+            constexpr int row2Count = 2;
+            juce::Slider* row2Knobs[row2Count] = {&layersSlider_, &dissonanceSlider_};
+            juce::Label* row2Labels[row2Count] = {&layersLabel_, &dissonanceLabel_};
+            for (int i = 0; i < row2Count; ++i) {
+                const int columnX = rightX + i * colWidth;
+                const int knobX = columnX + (colWidth - smallKnobSize) / 2;
+                row2Labels[i]->setBounds(columnX, row2Y, colWidth, knobLabelHeight);
+                row2Knobs[i]->setBounds(knobX, row2Y + knobLabelHeight + 2, smallKnobSize,
+                                        smallKnobSize + knobTextBoxHeight);
+            }
+
+            const int row2Bottom = row2Y + knobLabelHeight + 2 + smallKnobSize + knobTextBoxHeight;
+            dividerY_ = row2Bottom + 10;
+
+            const int evolutionLabelY = row2Bottom + 16;
             evolutionSectionLabel_.setBounds(padding, evolutionLabelY, 100, 14);
 
             const int toggleRowY = evolutionLabelY + 18;
             const int toggleColumnWidth = contentWidth / kEvolutionToggleCount;
-            constexpr int toggleCaptionHeight = 12;
-            constexpr int toggleSize = 16;
 
             for (size_t i = 0; i < kEvolutionToggleCount; ++i) {
                 const int columnX = padding + static_cast<int>(i) * toggleColumnWidth;
@@ -1457,17 +1552,26 @@ private:
 
             const int rightX = padding + leftColumnWidth + 10;
             const int rightWidth = contentWidth - leftColumnWidth - 10;
-            constexpr int row1Count = 3;
-            constexpr int row2Count = 4;
-            const int row1ColWidth = rightWidth / row1Count;
-            const int row2ColWidth = rightWidth / row2Count;
+            constexpr int gridCols = 4;
+            const int colWidth = rightWidth / gridCols;
 
-            juce::Slider* row1Knobs[row1Count] = {&timbreSlider_, &attackSlider_, &dissonanceSlider_};
-            juce::Label* row1Labels[row1Count] = {&timbreLabel_, &attackLabel_, &dissonanceLabel_};
+            // Sustain sits alone in column 3 — no row 2 counterpart shares
+            // that column, so it's grouped into row 1 (top-aligned) rather
+            // than row 2, matching "an orphaned single control aligns to
+            // the top of its column, not the bottom." Row 1 is 4 wide
+            // here (Dirt/Attack/Dissonance + Sustain); row 2 stays 3
+            // (Groove/Busy/Wander), leaving row 2's column 3 empty instead.
+            constexpr int row1Count = 4;
+            constexpr int row2Count = 3;
+
+            juce::Slider* row1Knobs[row1Count] = {&timbreSlider_, &attackSlider_, &dissonanceSlider_,
+                                                  &sustainSlider_};
+            juce::Label* row1Labels[row1Count] = {&timbreLabel_, &attackLabel_, &dissonanceLabel_,
+                                                  &sustainLabel_};
             for (int i = 0; i < row1Count; ++i) {
-                const int columnX = rightX + i * row1ColWidth;
-                const int knobX = columnX + (row1ColWidth - smallKnobSize) / 2;
-                row1Labels[i]->setBounds(columnX, knobAreaTop, row1ColWidth, knobLabelHeight);
+                const int columnX = rightX + i * colWidth;
+                const int knobX = columnX + (colWidth - smallKnobSize) / 2;
+                row1Labels[i]->setBounds(columnX, knobAreaTop, colWidth, knobLabelHeight);
                 row1Knobs[i]->setBounds(knobX, knobAreaTop + knobLabelHeight + 2, smallKnobSize,
                                         smallKnobSize + knobTextBoxHeight);
             }
@@ -1475,14 +1579,12 @@ private:
             const int row1Bottom = knobAreaTop + knobLabelHeight + 2 + smallKnobSize + knobTextBoxHeight;
             const int row2Y = row1Bottom + rowGap;
 
-            juce::Slider* row2Knobs[row2Count] = {&grooveSlider_, &busySlider_, &wanderSlider_,
-                                                  &sustainSlider_};
-            juce::Label* row2Labels[row2Count] = {&grooveLabel_, &busyLabel_, &wanderLabel_,
-                                                  &sustainLabel_};
+            juce::Slider* row2Knobs[row2Count] = {&grooveSlider_, &busySlider_, &wanderSlider_};
+            juce::Label* row2Labels[row2Count] = {&grooveLabel_, &busyLabel_, &wanderLabel_};
             for (int i = 0; i < row2Count; ++i) {
-                const int columnX = rightX + i * row2ColWidth;
-                const int knobX = columnX + (row2ColWidth - smallKnobSize) / 2;
-                row2Labels[i]->setBounds(columnX, row2Y, row2ColWidth, knobLabelHeight);
+                const int columnX = rightX + i * colWidth;
+                const int knobX = columnX + (colWidth - smallKnobSize) / 2;
+                row2Labels[i]->setBounds(columnX, row2Y, colWidth, knobLabelHeight);
                 row2Knobs[i]->setBounds(knobX, row2Y + knobLabelHeight + 2, smallKnobSize,
                                         smallKnobSize + knobTextBoxHeight);
             }

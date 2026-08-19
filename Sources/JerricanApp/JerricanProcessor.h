@@ -447,6 +447,13 @@ public:
         const float evolutionAmount = evolutionAmount_.load(std::memory_order_relaxed);
         const float evolutionSpeed = evolutionSpeed_.load(std::memory_order_relaxed);
         const float masterVolume = masterVolume_.load(std::memory_order_relaxed);
+        // Mirrors Marmite's MarmiteProcessor solo gating exactly: mutes
+        // audibility only, doesn't stop spawning/evolution — a soloed
+        // voice's siblings keep running underneath, just silently.
+        bool anySoloed = false;
+        for (const auto& voice : voices_) {
+            anySoloed = anySoloed || voice.isSoloed();
+        }
 
         for (int sample = 0; sample < numSamples; ++sample) {
             const bool onGridBoundary = playing && patternClock_.tick();
@@ -461,6 +468,7 @@ public:
             for (size_t i = 0; i < voices_.size(); ++i) {
                 auto& voice = voices_[i];
                 auto& cloud = grainClouds_[i];
+                const bool voiceIsAudible = !anySoloed || voice.isSoloed();
 
                 evolutionEngines_[i].update(voice, playing ? evolutionAmount : 0.0f, evolutionSpeed);
 
@@ -536,8 +544,10 @@ public:
                                                      voice.getVolume(), voice.getDissonance(),
                                                      voice.getRootSemitoneOffset());
                 }
-                mixedLeft += voiceSample.left;
-                mixedRight += voiceSample.right;
+                if (voiceIsAudible) {
+                    mixedLeft += voiceSample.left;
+                    mixedRight += voiceSample.right;
+                }
             }
 
             constexpr float headroom = 0.5f;

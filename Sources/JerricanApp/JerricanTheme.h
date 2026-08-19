@@ -27,4 +27,9 @@ inline const juce::Colour evolutionAccent{0xff5fd8c9u};
 inline const juce::Colour danger{0xffef4444u};
 inline const juce::Colour dangerDeep{0xffb91c1cu};
 
+// Solo button — a cool blue distinct from every other accent in the app
+// (amber = direct control, teal = Evolution, red = danger/live), closer to
+// the "bypass/isolate" blue common in plugin UIs.
+inline const juce::Colour soloAccent{0xff3b82f6u};
+
 }  // namespace JerricanTheme

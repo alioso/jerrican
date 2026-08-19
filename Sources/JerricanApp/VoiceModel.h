@@ -44,6 +44,10 @@ public:
 
     const std::string& getName() const { return name_; }
     bool isEnabled() const { return enabled_.load(std::memory_order_relaxed); }
+    // Transient mixer-strip state, deliberately not a constructor param and
+    // not touched by resetVoicesToInitialState()/Randomize/SceneState —
+    // matches Marmite's DrumVoiceModel::soloed_ precedent exactly.
+    bool isSoloed() const { return soloed_.load(std::memory_order_relaxed); }
     float getVolume() const { return volume_.load(std::memory_order_relaxed); }
     float getPitchRangeLow() const { return pitchRangeLow_.load(std::memory_order_relaxed); }
     float getPitchRangeHigh() const { return pitchRangeHigh_.load(std::memory_order_relaxed); }
@@ -58,6 +62,7 @@ public:
     float getAttack() const { return attack_.load(std::memory_order_relaxed); }
 
     void setEnabled(bool enabled) { enabled_.store(enabled, std::memory_order_relaxed); }
+    void setSoloed(bool soloed) { soloed_.store(soloed, std::memory_order_relaxed); }
     void setVolume(float volume) { volume_.store(clamp01(volume), std::memory_order_relaxed); }
 
     void setPitchRange(float low, float high) {
@@ -102,6 +107,7 @@ private:
 
     std::string name_;
     std::atomic<bool> enabled_;
+    std::atomic<bool> soloed_{false};
     std::atomic<float> volume_;
     std::atomic<float> pitchRangeLow_;
     std::atomic<float> pitchRangeHigh_;
