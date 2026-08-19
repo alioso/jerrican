@@ -11,14 +11,14 @@
 // are silent and safe to re-trigger at any time.
 class Grain {
 public:
-    // Ambient: symmetric Hann window. trigger()'s path (Spark/Haze) leaves
+    // Ambient: symmetric Hann window. trigger()'s path (Keys/Haze) leaves
     // it unfiltered; triggerAmbient() (the Ambient voice) applies its own
     // static Cleanliness-driven lowpass (see triggerAmbient) despite
     // sharing this same Character — the applyFilterSweep dispatch below
     // is keyed off RenderMode, not Character, for that reason. Plucked:
     // fast attack + curved decay plus a bright-to-dark filter sweep — a
     // produced pluck rather than a static tone, for the short-grain
-    // "instrument" voices (Bass/Spark).
+    // "instrument" voices (Bass/Keys).
     enum class Character { Ambient, Plucked };
 
     struct StereoSample {
@@ -315,7 +315,7 @@ public:
         hazeCabFilterCoefficient_ = cabCoefficient;
     }
 
-    // Spark-only: an explicit morph across "mode" — Piano (0, Sine+Saw
+    // Keys-only: an explicit morph across "mode" — Piano (0, Sine+Saw
     // blend, bright at the attack) -> Organ (0.5, Sine + a locked 2nd
     // harmonic, pure/drawbar-like) -> Wurlitzer (1, the existing FM
     // oscillator, already used this way for Ambient's Bell) — same
@@ -329,7 +329,7 @@ public:
     // spawnChordNow's Voicing control to fade harmony tones in/out
     // relative to the melody tone (1.0 = full, unaffected, the same as
     // before this parameter existed).
-    void triggerSpark(double sampleRate, float pitch, float durationMs, float pan, float mode,
+    void triggerKeys(double sampleRate, float pitch, float durationMs, float pan, float mode,
                       float dirt, float gain = 1.0f) {
         sineOscillator_.setWaveform(VoiceOscillator::Waveform::Sine);
         sineOscillator_.setSampleRate(sampleRate);
@@ -337,39 +337,39 @@ public:
         fmOscillator_.setWaveform(VoiceOscillator::Waveform::Fm);
         fmOscillator_.setSampleRate(sampleRate);
         fmOscillator_.reset();
-        sparkDetuneOsc_.setWaveform(VoiceOscillator::Waveform::Sine);
-        sparkDetuneOsc_.setSampleRate(sampleRate);
-        sparkDetuneOsc_.reset();
+        keysDetuneOsc_.setWaveform(VoiceOscillator::Waveform::Sine);
+        keysDetuneOsc_.setSampleRate(sampleRate);
+        keysDetuneOsc_.reset();
         noiseOscillator_.setWaveform(VoiceOscillator::Waveform::Noise);
         noiseOscillator_.setSampleRate(sampleRate);
         noiseOscillator_.reset();
         harmonicPhase_ = 0.0;
-        mode_ = RenderMode::SparkChord;
-        sparkGain_ = gain;
+        mode_ = RenderMode::KeysChord;
+        keysGain_ = gain;
 
         const float clampedMode = std::max(0.0f, std::min(1.0f, mode));
         if (clampedMode < 0.5f) {
             const float u = clampedMode * 2.0f;
-            sparkPianoWeight_ = 1.0f - u;
-            sparkOrganWeight_ = u;
-            sparkWurlitzerWeight_ = 0.0f;
+            keysPianoWeight_ = 1.0f - u;
+            keysOrganWeight_ = u;
+            keysWurlitzerWeight_ = 0.0f;
         } else {
             const float u = (clampedMode - 0.5f) * 2.0f;
-            sparkPianoWeight_ = 0.0f;
-            sparkOrganWeight_ = 1.0f - u;
-            sparkWurlitzerWeight_ = u;
+            keysPianoWeight_ = 0.0f;
+            keysOrganWeight_ = 1.0f - u;
+            keysWurlitzerWeight_ = u;
         }
         // Attack speed follows Mode, reusing the same weights: a struck
         // piano hits near-instantly, a drawbar organ swells in slowly,
         // Wurlitzer's tine attack sits between the two but nearer Piano's.
-        sparkAttackFraction_ = sparkPianoWeight_ * kSparkPianoAttackFraction +
-                               sparkOrganWeight_ * kSparkOrganAttackFraction +
-                               sparkWurlitzerWeight_ * kSparkWurlitzerAttackFraction;
+        keysAttackFraction_ = keysPianoWeight_ * kKeysPianoAttackFraction +
+                               keysOrganWeight_ * kKeysOrganAttackFraction +
+                               keysWurlitzerWeight_ * kKeysWurlitzerAttackFraction;
 
         const float clampedDirt = std::max(0.0f, std::min(1.0f, dirt));
-        sparkDirtDetuneWeight_ = lerp(0.0f, kSparkMaxDirtDetuneWeight, clampedDirt);
-        sparkDriveAmount_ = lerp(kSparkMinDrive, kSparkMaxDrive, clampedDirt);
-        sparkLoudnessCompensation_ = lerp(1.0f, kSparkMaxDriveLoudnessCompensation, clampedDirt);
+        keysDirtDetuneWeight_ = lerp(0.0f, kKeysMaxDirtDetuneWeight, clampedDirt);
+        keysDriveAmount_ = lerp(kKeysMinDrive, kKeysMaxDrive, clampedDirt);
+        keysLoudnessCompensation_ = lerp(1.0f, kKeysMaxDriveLoudnessCompensation, clampedDirt);
         // Character::Plucked (below) applies a filter sweep to every grain
         // automatically — left at its class defaults (kDefaultFilterStart/
         // EndMultiple) this ran at full, fixed intensity on every note
@@ -378,8 +378,8 @@ public:
         // the same way Bass ties its own sweep to Timbre/Dirt: both ends
         // collapse to the same flat cutoff (no sweep, no coloration) at
         // Dirt=0, opening up into a real sweep only as Dirt rises.
-        filterStartMultiple_ = lerp(kSparkFilterFlatMultiple, kSparkFilterStartMultiple, clampedDirt);
-        filterEndMultiple_ = lerp(kSparkFilterFlatMultiple, kSparkFilterEndMultiple, clampedDirt);
+        filterStartMultiple_ = lerp(kKeysFilterFlatMultiple, kKeysFilterStartMultiple, clampedDirt);
+        filterEndMultiple_ = lerp(kKeysFilterFlatMultiple, kKeysFilterEndMultiple, clampedDirt);
 
         beginLife(sampleRate, pitch, durationMs, pan, Character::Plucked);
     }
@@ -511,7 +511,7 @@ public:
                 sample = cabbed * hazeLoudnessCompensation_;
                 break;
             }
-            case RenderMode::SparkChord: {
+            case RenderMode::KeysChord: {
                 const float sineSample = sineOscillator_.renderSample(pitch_);
                 const float fmSample = fmOscillator_.renderSample(pitch_);
 
@@ -534,8 +534,8 @@ public:
                 // struck string without this decay.
                 const float elapsedMs = t * noteDurationMs_;
                 const float pianoBrightness =
-                    kSparkPianoSustainFloor +
-                    (1.0f - kSparkPianoSustainFloor) * std::exp(-elapsedMs / kSparkPianoDecayMs);
+                    kKeysPianoSustainFloor +
+                    (1.0f - kKeysPianoSustainFloor) * std::exp(-elapsedMs / kKeysPianoDecayMs);
                 // Hammer-strike transient — a fast-decaying filtered-noise
                 // burst layered onto the attack, same idiom as Bass's own
                 // pluck-click (see kCoreNoiseWeight/kNoiseDecayMs in
@@ -545,22 +545,22 @@ public:
                 // partials are shaped — this is the "hammer hitting a
                 // string" cue a pure sine+harmonic blend can't provide.
                 const float noiseSample = noiseOscillator_.renderSample(pitch_);
-                const float noiseEnvelope = std::exp(-elapsedMs / kSparkPianoNoiseDecayMs);
-                const float piano = kSparkPianoFundamentalWeight * sineSample +
-                                    kSparkPianoHarmonicWeight * pianoBrightness * secondHarmonic +
-                                    kSparkPianoNoiseWeight * noiseEnvelope * noiseSample;
+                const float noiseEnvelope = std::exp(-elapsedMs / kKeysPianoNoiseDecayMs);
+                const float piano = kKeysPianoFundamentalWeight * sineSample +
+                                    kKeysPianoHarmonicWeight * pianoBrightness * secondHarmonic +
+                                    kKeysPianoNoiseWeight * noiseEnvelope * noiseSample;
                 const float organ = 0.7f * sineSample + 0.3f * secondHarmonic;
                 const float wurlitzer = fmSample;
-                float raw = sparkPianoWeight_ * piano + sparkOrganWeight_ * organ +
-                           sparkWurlitzerWeight_ * wurlitzer;
+                float raw = keysPianoWeight_ * piano + keysOrganWeight_ * organ +
+                           keysWurlitzerWeight_ * wurlitzer;
 
                 // Dirt: a detuned unison layer (honky-tonk-style beating)
                 // additively mixed in, then a light version of the same
                 // tanh-saturation idiom Bass/Haze already use for grit.
-                const float detuneSample = sparkDetuneOsc_.renderSample(pitch_ + kSparkDetuneAmount);
-                raw += detuneSample * sparkDirtDetuneWeight_;
-                sample = (std::tanh(raw * sparkDriveAmount_) / std::tanh(sparkDriveAmount_)) *
-                        sparkLoudnessCompensation_ * sparkGain_;
+                const float detuneSample = keysDetuneOsc_.renderSample(pitch_ + kKeysDetuneAmount);
+                raw += detuneSample * keysDirtDetuneWeight_;
+                sample = (std::tanh(raw * keysDriveAmount_) / std::tanh(keysDriveAmount_)) *
+                        keysLoudnessCompensation_ * keysGain_;
                 break;
             }
         }
@@ -571,8 +571,8 @@ public:
         float envelope;
         if (mode_ == RenderMode::BassBlend) {
             envelope = bassEnvelope(t, noteDurationMs_, attackMs_);
-        } else if (mode_ == RenderMode::SparkChord) {
-            envelope = percussiveEnvelope(t, sparkAttackFraction_);
+        } else if (mode_ == RenderMode::KeysChord) {
+            envelope = percussiveEnvelope(t, keysAttackFraction_);
         } else if (character_ == Character::Plucked) {
             envelope = percussiveEnvelope(t);
         } else {
@@ -635,7 +635,7 @@ private:
     // no movement at all, so nothing "boings".
     static constexpr float kBassFilterFlatMultiple = 6.0f;
     // Bass envelope (triggerBlended only — trigger()'s percussiveEnvelope
-    // below is untouched, still used by Drone/Spark/Haze): a
+    // below is untouched, still used by Drone/Keys/Haze): a
     // user-controllable pluck attack (see Attack/attackMs_ in
     // triggerBlended — from an almost-instant hard pluck to a slow soft
     // swell), then one continuous exponential decay across the rest of
@@ -760,48 +760,48 @@ private:
     // top wasn't needed and only softened the result.
     static constexpr float kHazeCabCutoffHz = 18000.0f;
 
-    // Spark's Dirt (triggerSpark) — a v1 simplification, uniform across
+    // Keys's Dirt (triggerKeys) — a v1 simplification, uniform across
     // the whole Mode range rather than mode-conditional character. Detune
     // expressed in normalized-pitch units (same reasoning as Haze's unison
     // detune — exponential mapping means a fixed offset is a fixed
     // proportional/cents detune everywhere, not a fixed Hz amount).
     // Drive/compensation follow the same decoupled-tanh idiom as Bass/Haze,
     // kept gentle — this is meant to read as "grit," not a fuzz stage.
-    static constexpr float kSparkDetuneAmount = 0.006f;
-    static constexpr float kSparkMaxDirtDetuneWeight = 0.6f;
-    static constexpr float kSparkMinDrive = 0.05f;
-    static constexpr float kSparkMaxDrive = 6.0f;
-    static constexpr float kSparkMaxDriveLoudnessCompensation = 0.85f;
-    // Spark's filter-sweep range, tied to Dirt (same shape as Bass's
+    static constexpr float kKeysDetuneAmount = 0.006f;
+    static constexpr float kKeysMaxDirtDetuneWeight = 0.6f;
+    static constexpr float kKeysMinDrive = 0.05f;
+    static constexpr float kKeysMaxDrive = 6.0f;
+    static constexpr float kKeysMaxDriveLoudnessCompensation = 0.85f;
+    // Keys's filter-sweep range, tied to Dirt (same shape as Bass's
     // kBassFilterFlatMultiple/StartMultiple/EndMultiple) — flat/no-sweep
     // at Dirt=0, a real brightness-decay sweep opening up as Dirt rises.
-    static constexpr float kSparkFilterStartMultiple = 8.0f;
-    static constexpr float kSparkFilterEndMultiple = 4.0f;
-    static constexpr float kSparkFilterFlatMultiple = 6.0f;
+    static constexpr float kKeysFilterStartMultiple = 8.0f;
+    static constexpr float kKeysFilterEndMultiple = 4.0f;
+    static constexpr float kKeysFilterFlatMultiple = 6.0f;
     // Piano's fundamental/2nd-harmonic weights and brightness decay (see
     // render path) — same shape as Bass's kEdgeSustainFloor/kEdgeDecayMs.
-    static constexpr float kSparkPianoFundamentalWeight = 0.75f;
-    static constexpr float kSparkPianoHarmonicWeight = 0.5f;
-    static constexpr float kSparkPianoSustainFloor = 0.25f;
-    static constexpr float kSparkPianoDecayMs = 220.0f;
+    static constexpr float kKeysPianoFundamentalWeight = 0.75f;
+    static constexpr float kKeysPianoHarmonicWeight = 0.5f;
+    static constexpr float kKeysPianoSustainFloor = 0.25f;
+    static constexpr float kKeysPianoDecayMs = 220.0f;
     // Piano's hammer-strike noise transient — short and fast-decaying
     // (a real hammer/string attack, not sustained hiss), same shape as
     // Bass's kNoiseDecayMs pluck-click.
-    static constexpr float kSparkPianoNoiseWeight = 0.35f;
-    static constexpr float kSparkPianoNoiseDecayMs = 35.0f;
+    static constexpr float kKeysPianoNoiseWeight = 0.35f;
+    static constexpr float kKeysPianoNoiseDecayMs = 35.0f;
     // Attack speed by Mode (fraction of the note's own length spent
     // ramping in — see render path's percussiveEnvelope(t, fraction)).
     // Piano: near-instant, a real hammer strike. Wurlitzer: quick tine
     // attack, a touch softer than Piano. Organ: a genuine slow swell.
-    static constexpr float kSparkPianoAttackFraction = 0.015f;
-    static constexpr float kSparkWurlitzerAttackFraction = 0.05f;
-    static constexpr float kSparkOrganAttackFraction = 0.35f;
+    static constexpr float kKeysPianoAttackFraction = 0.015f;
+    static constexpr float kKeysWurlitzerAttackFraction = 0.05f;
+    static constexpr float kKeysOrganAttackFraction = 0.35f;
 
     static float hannEnvelope(float t) { return 0.5f - 0.5f * std::cos(twoPi * t); }
 
     static float percussiveEnvelope(float t) { return percussiveEnvelope(t, attackFraction); }
 
-    // Parameterized version of the above — Spark uses this instead of the
+    // Parameterized version of the above — Keys uses this instead of the
     // fixed-fraction one above, since a struck piano and a swelling organ
     // genuinely have different attack speeds and the shared, fixed 0.15
     // fraction was the same regardless of Mode (read as a generic,
@@ -863,7 +863,7 @@ private:
         return filterState_;
     }
 
-    enum class RenderMode { Single, BassBlend, AmbientBlend, HazeBlend, SparkChord };
+    enum class RenderMode { Single, BassBlend, AmbientBlend, HazeBlend, KeysChord };
 
     VoiceOscillator sineOscillator_;   // used by triggerBlended()/triggerAmbient()
     VoiceOscillator sawOscillator_;    // used by triggerBlended()/triggerAmbient()
@@ -901,15 +901,15 @@ private:
     float hazeCabFilterState2_ = 0.0f;        // triggerHaze() only
     float hazeCabFilterCoefficient_ = 1.0f;   // triggerHaze() only
     float hazeCabBlend_ = 0.0f;               // triggerHaze() only
-    VoiceOscillator sparkDetuneOsc_;          // triggerSpark() only
-    float sparkPianoWeight_ = 0.0f;           // triggerSpark() only
-    float sparkOrganWeight_ = 0.0f;           // triggerSpark() only
-    float sparkWurlitzerWeight_ = 0.0f;       // triggerSpark() only
-    float sparkDirtDetuneWeight_ = 0.0f;      // triggerSpark() only
-    float sparkDriveAmount_ = 1.0f;           // triggerSpark() only
-    float sparkLoudnessCompensation_ = 1.0f;  // triggerSpark() only
-    float sparkGain_ = 1.0f;                  // triggerSpark() only
-    float sparkAttackFraction_ = 0.15f;       // triggerSpark() only
+    VoiceOscillator keysDetuneOsc_;          // triggerKeys() only
+    float keysPianoWeight_ = 0.0f;           // triggerKeys() only
+    float keysOrganWeight_ = 0.0f;           // triggerKeys() only
+    float keysWurlitzerWeight_ = 0.0f;       // triggerKeys() only
+    float keysDirtDetuneWeight_ = 0.0f;      // triggerKeys() only
+    float keysDriveAmount_ = 1.0f;           // triggerKeys() only
+    float keysLoudnessCompensation_ = 1.0f;  // triggerKeys() only
+    float keysGain_ = 1.0f;                  // triggerKeys() only
+    float keysAttackFraction_ = 0.15f;       // triggerKeys() only
     Character character_ = Character::Ambient;
     float pitch_ = 0.5f;
     double sampleRate_ = 44100.0;

@@ -84,7 +84,7 @@ int main() {
     // The actual harmony guarantee: at dissonance=0, every chord tone
     // (every degree, root, thickness) is already exactly on the shared
     // pentatonic scale — i.e. re-quantizing it with HarmonicScale is a
-    // no-op. This is what makes Spark's chords land in the same key as
+    // no-op. This is what makes Keys's chords land in the same key as
     // every other pentatonic-quantized voice; an earlier version built
     // chords from a full 7-note major scale, which needed scale degrees
     // (the 4th, the major 7th) that don't exist in the pentatonic set at

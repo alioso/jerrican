@@ -18,7 +18,7 @@
 // value each call.
 //
 // All four voices now have bespoke, metered/scheduled spawn paths — none
-// of them use continuous stochastic scattering anymore (Spark was the
+// of them use continuous stochastic scattering anymore (Keys was the
 // last holdout, until its chord-comping redesign). Ambient uses
 // renderAmbientSample() and Haze uses renderHazeSample() — Speed/Drift
 // (Motion relabeled) directly scale grain duration (see
@@ -40,7 +40,7 @@
 // long sustained notes, so the exponent stays gentle — only the smoothing
 // was worth keeping. Bass uses spawnGrainNow(), called directly by
 // JerricanAudioProcessor's metered scheduler (see BassGroovePattern.h);
-// Spark uses spawnChordNow() the same way (see SparkChordPattern.h),
+// Keys uses spawnChordNow() the same way (see KeysChordPattern.h),
 // spawning up to 4 grains at once — one per chord tone — instead of one.
 class GrainCloud {
 public:
@@ -74,7 +74,7 @@ public:
     // hard parameter snap. Scoped to the voice's current pitch range, same
     // as the autonomous drift in updateDrift() — otherwise the new target
     // just gets clamped straight back to the range edge it's already at.
-    // Only meaningful for the Drone/Spark/Haze (renderSample) path — Bass
+    // Only meaningful for the Drone/Keys/Haze (renderSample) path — Bass
     // doesn't use driftCenter_/breathingGain_ at all.
     void rerollDrift(float pitchRangeLow, float pitchRangeHigh) {
         driftTarget_ = random_.nextFloatRange(pitchRangeLow, pitchRangeHigh);
@@ -88,7 +88,7 @@ public:
     // grains are allowed to spawn at all (Play/Stop, voice enabled),
     // fully separate from Layers' density value: Layers=0 must still mean
     // "very sparse", not "silent", so it can't double as the stop/start
-    // gate the way Spark/Haze's spawnDensity=0-when-stopped trick does —
+    // gate the way Keys/Haze's spawnDensity=0-when-stopped trick does —
     // Ambient's own density floor (see maybeSpawnAmbientGrain) would
     // otherwise keep spawning new grains forever even while stopped, or
     // before Play was ever pressed.
@@ -191,13 +191,13 @@ public:
         }
     }
 
-    // Spark-only: places up to 4 grains at once — one per chord tone —
+    // Keys-only: places up to 4 grains at once — one per chord tone —
     // bypassing the continuous stochastic spawn path entirely, mirroring
     // spawnGrainNow's "called only when the metered scheduler fires"
     // shape. ChordScale::chordTones returns normalized pitches already
     // centered/spread by Thickness; the chord is recentered on this
     // voice's configured Pitch Range (see below for how) so Pitch Range
-    // still means something for Spark, without disturbing the actual
+    // still means something for Keys, without disturbing the actual
     // intervals between chord tones. Each tone gets a slightly different
     // pan for stereo width — a chord voiced dead center reads as mono/flat
     // in a way a single bass note doesn't.
@@ -294,7 +294,7 @@ public:
             const float pan = basePan + random_.nextFloatRange(-0.05f, 0.05f);
             const float gain = toneIndex == melodyIndex ? 1.0f : clampedVoicing;
 
-            grain.triggerSpark(sampleRate_, pitch, durationMs, pan, mode, dirt, gain);
+            grain.triggerKeys(sampleRate_, pitch, durationMs, pan, mode, dirt, gain);
             ++toneIndex;
         }
     }
@@ -405,7 +405,7 @@ private:
     }
 
     // Ambient-only equivalent of the old stochastic single-note spawn path
-    // (removed — Bass/Ambient/Haze/Spark all now have bespoke spawn
+    // (removed — Bass/Ambient/Haze/Keys all now have bespoke spawn
     // methods, nothing calls the generic path anymore). Layers=0 is
     // floored above true zero (a pad going fully silent because a knob hit
     // its exact minimum isn't "sparse", it's broken — same reasoning as
@@ -500,7 +500,7 @@ private:
     static constexpr float driftPickRateSpanHz = 0.45f;
     static constexpr float localSpreadFraction = 0.15f;
     static constexpr float kWanderSpreadFraction = 0.35f;
-    // Spark-only: how far the melody tone can wander from its chord tone
+    // Keys-only: how far the melody tone can wander from its chord tone
     // when it does wander (see spawnChordNow) — roughly +/-3 semitones
     // (0.06 * 48), a local roam, not a register jump.
     static constexpr float kMelodyWanderSpread = 0.06f;

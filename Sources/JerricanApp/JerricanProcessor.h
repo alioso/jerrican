@@ -7,11 +7,11 @@
 
 #include "AudioRecorder.h"
 #include "BassGroovePattern.h"
-#include "SparkChordPattern.h"
 #include "EvolutionEngine.h"
 #include "FastRandom.h"
 #include "Grain.h"
 #include "GrainCloud.h"
+#include "KeysChordPattern.h"
 #include "MeterTable.h"
 #include "MidiBindingManager.h"
 #include "MidiPresetStore.h"
@@ -38,10 +38,10 @@ public:
     // sustain their rhythmic-bassline meaning; Ambient gives timbre/
     // groove/wander/cleanliness its Material/Speed/Complexity/Dirt
     // meaning; Haze gives timbre/groove/wander/attack its Texture/Drift/
-    // Layers/Fuzz meaning; Spark gives timbre/groove/wander/busy/sustain/
+    // Layers/Fuzz meaning; Keys gives timbre/groove/wander/busy/sustain/
     // cleanliness its Mode/Groove/Thickness/Busy/Sustain/Dirt meaning
-    // (chord-comping keyboard voice — see SparkChordPattern.h/
-    // Grain::triggerSpark). attack is otherwise Bass-only (envelope
+    // (chord-comping keyboard voice — see KeysChordPattern.h/
+    // Grain::triggerKeys). attack is otherwise Bass-only (envelope
     // shape) — unused by whichever voices don't consume a given field.
     struct InitialVoice {
         const char* name;
@@ -66,7 +66,7 @@ public:
     // Grain duration range is the main lever for a voice's fundamental
     // character (see GrainCloud) — short & sparse reads as pointillistic,
     // long & overlapping reads as a sustained drone. Character::Plucked
-    // (Bass/Spark) gets a softened fast-attack envelope and a gentle
+    // (Bass/Keys) gets a softened fast-attack envelope and a gentle
     // bright-to-dark filter sweep per grain; Character::Ambient (Ambient/
     // Haze) is the original unfiltered symmetric envelope. Dissonance
     // near 0 for everyone by default so voices quantize mostly to their
@@ -87,7 +87,7 @@ public:
     // leaning toward Glass (pure) and Cleanliness leaning clean — a
     // deliberately understated starting point, not locked.
     //
-    // Spark sits mid-register (~95-260Hz, comfortable comping range for
+    // Keys sits mid-register (~95-260Hz, comfortable comping range for
     // chords), grain duration 150ms-2.5s so Sustain has real range (short
     // stabs to lingering chords) without going as extreme as Bass's
     // sustain-a-whole-bar ceiling. Mode starts leaning Piano, modest
@@ -98,7 +98,7 @@ public:
           110.0f, 4800.0f, Grain::Character::Plucked},
          {"Ambient", true, 0.60f, 0.05f, 0.20f, 0.15f, 0.10f, 0.12f, 0.15f, 0.5f, 0.5f, 0.65f, 0.5f, 0,
           1500.0f, 4000.0f, Grain::Character::Ambient},
-         {"Spark", true, 0.55f, 0.35f, 0.65f, 0.30f, 0.30f, 0.30f, 0.10f, 0.40f, 0.40f, 0.70f, 0.5f, 7,
+         {"Keys", true, 0.55f, 0.35f, 0.65f, 0.30f, 0.30f, 0.30f, 0.10f, 0.40f, 0.40f, 0.70f, 0.5f, 7,
           150.0f, 2500.0f, Grain::Character::Plucked},
          {"Haze", true, 0.50f, 0.15f, 0.35f, 0.75f, 0.20f, 0.15f, 0.15f, 0.5f, 0.5f, 0.5f, 0.0f, 4,
           2000.0f, 5000.0f, Grain::Character::Ambient}}};
@@ -146,7 +146,7 @@ public:
           currentBassAccentProfile_(
               MeterTable::generateBassAccentProfile(MeterTable::kMeters[MeterTable::kDefaultMeterIndex])),
           bassGroovePattern_(0x7a2c91efu, &currentBassAccentProfile_, currentMeterSlotCount_),
-          sparkChordPattern_(0x2f8b6d3cu, &currentBassAccentProfile_, currentMeterSlotCount_) {
+          keysChordPattern_(0x2f8b6d3cu, &currentBassAccentProfile_, currentMeterSlotCount_) {
         for (size_t i = 0; i < voices_.size(); ++i) {
             const auto& initial = kInitialVoices[i];
             const float center = (initial.pitchLow + initial.pitchHigh) * 0.5f;
@@ -253,7 +253,7 @@ public:
             // VoiceMotion/VoiceComplexity keep their original MIDI-target
             // identity (see MidiBindingManager.h) even though the
             // VoiceModel fields underneath were renamed groove_/wander_ —
-            // for Bass this now means Groove/Wander, for Drone/Spark/Haze
+            // for Bass this now means Groove/Wander, for Drone/Keys/Haze
             // it's exactly the same Motion/Complexity behavior as before.
             case MidiTarget::VoiceMotion:
                 voice.setGroove(value);
@@ -267,8 +267,8 @@ public:
                 voice.setDissonance(value);
                 evolution.resyncDissonance(value);
                 break;
-            // Bass's Busy/Sustain, reused as Spark's Busy/Sustain — see the
-            // Spark spawnChordNow call site. No-op for Ambient/Haze, which
+            // Bass's Busy/Sustain, reused as Keys's Busy/Sustain — see the
+            // Keys spawnChordNow call site. No-op for Ambient/Haze, which
             // have no defined meaning for either.
             case MidiTarget::VoiceBusy:
                 if (focused == 0 || focused == 2) {
@@ -282,8 +282,8 @@ public:
                     evolution.resyncSustain(value);
                 }
                 break;
-            // Bass's Attack, reused as Haze's Fuzz and Spark's Voicing —
-            // see the Haze renderHazeSample / Spark spawnChordNow call
+            // Bass's Attack, reused as Haze's Fuzz and Keys's Voicing —
+            // see the Haze renderHazeSample / Keys spawnChordNow call
             // sites.
             case MidiTarget::VoiceAttack:
                 if (focused == 0 || focused == 2 || focused == 3) {
@@ -291,8 +291,8 @@ public:
                     evolution.resyncAttack(value);
                 }
                 break;
-            // Ambient's Cleanliness, reused as Spark's Dirt — see the
-            // Spark spawnChordNow call site. No-op for Bass/Haze.
+            // Ambient's Cleanliness, reused as Keys's Dirt — see the
+            // Keys spawnChordNow call site. No-op for Bass/Haze.
             case MidiTarget::VoiceCleanliness:
                 if (focused == 1 || focused == 2) {
                     voice.setCleanliness(value);
@@ -528,7 +528,7 @@ public:
                     // maybeSpawnHazeGrain), Layers (Complexity relabeled)
                     // drives grain density, Texture drives Grain::
                     // triggerHaze's tone instead of the random
-                    // pickWaveform lottery Spark still uses. `active`
+                    // pickWaveform lottery Keys still uses. `active`
                     // gates new-grain spawning, same reasoning as Ambient.
                     // getAttack() reused as Haze's Fuzz amount — same
                     // generic-slot-reuse pattern as Ambient's Cleanliness;
@@ -541,10 +541,10 @@ public:
                         voice.getAttack(), playing && voice.isEnabled(),
                         voice.getRootSemitoneOffset());
                 } else if (i == 2) {
-                    // Spark: a chord-comping keyboard voice — Piano<->Organ
+                    // Keys: a chord-comping keyboard voice — Piano<->Organ
                     // <->Wurlitzer morph (Mode, reusing the old Timbre
                     // slot), diatonic chords (see ChordScale.h) fired on a
-                    // metered pattern (SparkChordPattern, a copy of
+                    // metered pattern (KeysChordPattern, a copy of
                     // BassGroovePattern's rhythm-mask mechanism extended
                     // with chord-degree selection) rather than continuous
                     // stochastic scattering. Groove/Busy/Sustain/Dirt reuse
@@ -564,12 +564,12 @@ public:
                     // "cleanliness" (higher = purer). Ambient's own
                     // triggerAmbient call below passes cleanliness_
                     // un-inverted because its DSP is written in terms of
-                    // cleanliness directly; Spark's is written in terms of
+                    // cleanliness directly; Keys's is written in terms of
                     // dirt, so it needs the flip that the UI's display-only
                     // inversion doesn't provide on its own — passing the
                     // raw stored value here had Dirt backwards (turning
                     // the knob up made the sound *cleaner*).
-                    const auto trigger = sparkChordPattern_.update(
+                    const auto trigger = keysChordPattern_.update(
                         onGridBoundary, currentSlot16_, voice.getBusy(), voice.getGroove(),
                         evolutionAmount, patternClock_.getSamplesPerSubdivision());
                     if (trigger.has_value() && playing && voice.isEnabled()) {
@@ -787,10 +787,10 @@ public:
             const float wander = randomizeRandom_.nextFloat01();
             const float volume = randomizeRandom_.nextFloat01();
             const float dissonance = randomizeRandom_.nextFloat01();
-            // Bass+Spark: also reroll Busy/Sustain, their shared bespoke
+            // Bass+Keys: also reroll Busy/Sustain, their shared bespoke
             // slot — meaningless for Ambient/Haze, left untouched.
-            // Ambient+Spark: same for Cleanliness (Dirt for Spark). Attack
-            // is Bass (envelope shape), Haze (Fuzz amount), *and* Spark
+            // Ambient+Keys: same for Cleanliness (Dirt for Keys). Attack
+            // is Bass (envelope shape), Haze (Fuzz amount), *and* Keys
             // (Voicing: melody<->chord).
             const float busy =
                 (i == 0 || i == 2) ? randomizeRandom_.nextFloat01() : voices_[i].getBusy();
@@ -913,8 +913,8 @@ private:
         currentBassAccentProfile_ = MeterTable::generateBassAccentProfile(meter);
         bassGroovePattern_.setAccentProfile(&currentBassAccentProfile_, meter.totalSlots);
         bassGroovePattern_.forceRegenerateNextBoundary();
-        sparkChordPattern_.setAccentProfile(&currentBassAccentProfile_, meter.totalSlots);
-        sparkChordPattern_.forceRegenerateNextBoundary();
+        keysChordPattern_.setAccentProfile(&currentBassAccentProfile_, meter.totalSlots);
+        keysChordPattern_.forceRegenerateNextBoundary();
         currentMeterSlotCount_ = meter.totalSlots;
         currentSlot16_ = -1;
         currentSlot16Display_.store(-1, std::memory_order_relaxed);
@@ -928,7 +928,7 @@ private:
         currentSlot16_ = -1;
         currentSlot16Display_.store(-1, std::memory_order_relaxed);
         bassGroovePattern_.forceRegenerateNextBoundary();
-        sparkChordPattern_.forceRegenerateNextBoundary();
+        keysChordPattern_.forceRegenerateNextBoundary();
     }
 
     // Reads the host's transport once per block when Host Sync is
@@ -982,7 +982,7 @@ private:
                 currentSlot16_ = slot - 1;  // the next tick's ++ lands exactly on `slot`
                 patternClock_.reset();
                 bassGroovePattern_.forceRegenerateNextBoundary();
-                sparkChordPattern_.forceRegenerateNextBoundary();
+                keysChordPattern_.forceRegenerateNextBoundary();
             }
         } else if (!hostPlaying && lastHostPlaying_) {
             isPlaying_.store(false, std::memory_order_relaxed);
@@ -1009,12 +1009,12 @@ private:
     MeterTable::AccentProfile currentBassAccentProfile_;
     PatternClock patternClock_;
     BassGroovePattern bassGroovePattern_;
-    // Spark shares Bass's clock/meter/accent-profile entirely (same bar-
+    // Keys shares Bass's clock/meter/accent-profile entirely (same bar-
     // position counter, same weight table) — both are metered instruments
     // on the same grid now; a different seed and independent Busy/Groove
     // values are enough for their rhythms to feel distinct without needing
     // a second accent-profile table.
-    SparkChordPattern sparkChordPattern_;
+    KeysChordPattern keysChordPattern_;
     // Shared bar-position counter for Bass — advanced once per
     // PatternClock grid tick. Starts at -1 so the first tick's increment
     // lands on slot 0, not 1.

@@ -23,7 +23,7 @@
 enum class MidiTarget {
     // Per-voice (21): applies to the focused voice. VoiceMotion/
     // VoiceComplexity/VoiceTimbre keep their original identity/name
-    // (still exactly "Motion"/"Complexity"/"Timbre" for Spark/Haze) even
+    // (still exactly "Motion"/"Complexity"/"Timbre" for Keys/Haze) even
     // though Bass's and Ambient's own knobs for the same underlying
     // VoiceModel fields are now labeled Groove/Wander/Material or
     // Speed/Complexity/Material — same precedent as Marmite's VoiceChaos

@@ -7,7 +7,7 @@
 #include "FastRandom.h"
 #include "HarmonicScale.h"
 
-// Pentatonic-native chord tables for Spark's keyboard voice — a sibling to
+// Pentatonic-native chord tables for Keys's keyboard voice — a sibling to
 // HarmonicScale.h, not an extension of it, but deliberately built to sit
 // in the exact same 5-note scale HarmonicScale locks every other voice to
 // (major pentatonic: scale degrees 0,2,4,7,9 semitones from the root,
@@ -15,7 +15,7 @@
 // 7-note-major-scale diatonic 7th chords (I maj7, IV maj7, V dom7, etc.) —
 // several of those (ii, IV, V, vii) need the scale's 4th or major-7th
 // degree, notes that flatly don't exist in the pentatonic set every other
-// voice is constrained to, so Spark read as "out of key" against the rest
+// voice is constrained to, so Keys read as "out of key" against the rest
 // of the ensemble no matter what else was tuned. Building chords directly
 // out of pentatonic scale steps instead guarantees every chord tone is
 // already a note the other voices could land on too.

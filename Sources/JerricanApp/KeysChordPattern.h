@@ -9,7 +9,7 @@
 #include "FastRandom.h"
 #include "MeterTable.h"
 
-// Spark's metered chord-comping engine — copies BassGroovePattern's
+// Keys's metered chord-comping engine — copies BassGroovePattern's
 // rhythm-mask mechanism nearly verbatim (Busy -> density, Groove ->
 // placement/feel + humanization, guaranteed downbeat, bar-boundary
 // regeneration; see BassGroovePattern.h for the full rationale, not
@@ -17,7 +17,7 @@
 // bar-boundary regeneration also has a chance to move to a new degree via
 // a small weighted transition table, so progressions read as directed
 // motion rather than uniformly random degree jumps.
-class SparkChordPattern {
+class KeysChordPattern {
 public:
     struct Trigger {
         int degree = 0;
@@ -25,7 +25,7 @@ public:
         float velocity = 1.0f;
     };
 
-    SparkChordPattern(std::uint32_t seed, const MeterTable::AccentProfile* accentProfile,
+    KeysChordPattern(std::uint32_t seed, const MeterTable::AccentProfile* accentProfile,
                       int activeSlotCount)
         : random_(seed), accentProfile_(accentProfile), activeSlotCount_(activeSlotCount) {}
 

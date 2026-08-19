@@ -148,7 +148,7 @@ public:
             "Busy - how often chords land; Sustain - how long each chord "
             "rings out, short stabs to lingering pads.\n"
             "Harmony is built from the same shared scale every other "
-            "voice quantizes to, so Spark always stays in key with the "
+            "voice quantizes to, so Keys always stays in key with the "
             "rest of the mix - chord progressions favor a few common "
             "moves rather than picking at random.\n\n"
             "Each control has its own small Evolution switch (on by default, "
@@ -388,7 +388,7 @@ public:
                 voiceRows_[i] = std::make_unique<HazeVoiceRow>(processor_.voice(i),
                                                                 processor_.evolutionEngine(i), this);
             } else {
-                voiceRows_[i] = std::make_unique<SparkVoiceRow>(processor_.voice(i),
+                voiceRows_[i] = std::make_unique<KeysVoiceRow>(processor_.voice(i),
                                                                  processor_.evolutionEngine(i), this);
             }
             addAndMakeVisible(*voiceRows_[i]);
@@ -568,9 +568,19 @@ public:
         const int cardWidth = (gridRight - gridLeft - gap * (columns - 1)) / columns;
         const int cardHeight = (gridBottom - gridTop - gap * (rows - 1)) / rows;
 
+        // Grid position per voice index (0=Bass, 1=Ambient, 2=Keys,
+        // 3=Haze — that indexing is load-bearing everywhere else in the
+        // app: kInitialVoices, JerricanProcessor's i==0/1/2/3 branches,
+        // MIDI target focused-voice gating, etc., so it stays fixed).
+        // This table only controls *where in the 2x2 grid* each card
+        // visually renders — Keys top-left, Haze top-right, Bass
+        // bottom-left, Ambient bottom-right — independent of index order.
+        static constexpr std::array<int, 4> kGridColumn = {0, 1, 0, 1};
+        static constexpr std::array<int, 4> kGridRow = {1, 1, 0, 0};
+
         for (size_t i = 0; i < voiceRows_.size(); ++i) {
-            const int column = static_cast<int>(i) % columns;
-            const int row = static_cast<int>(i) / columns;
+            const int column = kGridColumn[i];
+            const int row = kGridRow[i];
             voiceRows_[i]->setBounds(gridLeft + column * (cardWidth + gap),
                                       gridTop + row * (cardHeight + gap), cardWidth, cardHeight);
         }
@@ -680,7 +690,7 @@ private:
     // full-width Pitch Range band, and a Key combo — the controls that
     // stay universal and unchanged across every voice. Each of the four
     // voices now has its own bespoke subclass (BassVoiceRow, AmbientVoiceRow,
-    // SparkVoiceRow, HazeVoiceRow) adding its own knob layout and Evolution
+    // KeysVoiceRow, HazeVoiceRow) adding its own knob layout and Evolution
     // toggle row below the shared divider. Visuals come from
     // JerricanLookAndFeel — this class only owns layout and VoiceModel/
     // EvolutionEngine wiring.
@@ -901,13 +911,13 @@ private:
         juce::Slider pitchRangeSlider_;
     };
 
-    // Spark's card (the sole remaining user — Bass/Ambient/Haze each grew
+    // Keys's card (the sole remaining user — Bass/Ambient/Haze each grew
     // their own bespoke class): a chord-comping keyboard voice — Volume
     // alone left, then a 4+4 grid on the right (row 1: Mode/Dirt/Thickness/
     // Voicing — the tone-and-texture quartet; row 2: Groove/Busy/Sustain/
     // Dissonance — the pattern/harmony trio + Dissonance). Mode reuses the
     // old Timbre slot (getTimbre/setTimbre — a continuous Piano<->Organ
-    // <->Wurlitzer morph now, see Grain::triggerSpark); Dirt reuses
+    // <->Wurlitzer morph now, see Grain::triggerKeys); Dirt reuses
     // Ambient's Cleanliness slot, same inverted-display convention (slider
     // shows 1-getCleanliness()); Thickness reuses the old Complexity slot
     // (getWander/setWander — chord voicing register spread now, see
@@ -915,11 +925,11 @@ private:
     // Attack slot (getAttack/setAttack — a third reuse, after Haze's Fuzz
     // — a continuous melody<->chord morph, see GrainCloud::spawnChordNow);
     // Groove/Busy/Sustain reuse Bass's slots directly (getGroove/getBusy/
-    // getSustain — same rhythmic-pattern meaning, driving SparkChordPattern
+    // getSustain — same rhythmic-pattern meaning, driving KeysChordPattern
     // instead of BassGroovePattern).
-    class SparkVoiceRow : public VoiceRowBase {
+    class KeysVoiceRow : public VoiceRowBase {
     public:
-        SparkVoiceRow(VoiceModel& voice, EvolutionEngine& evolutionEngine,
+        KeysVoiceRow(VoiceModel& voice, EvolutionEngine& evolutionEngine,
                       JerricanAudioProcessorEditor* owner)
             : VoiceRowBase(voice, evolutionEngine, owner) {
             setUpKnob(volumeSlider_, volumeLabel_, "Volume");
@@ -2639,14 +2649,14 @@ private:
                 case MidiTarget::VoiceMotion: return "Motion / Groove / Speed / Drift";
                 case MidiTarget::VoiceComplexity: return "Complexity / Wander / Layers / Thickness";
                 case MidiTarget::VoiceDissonance: return "Dissonance";
-                case MidiTarget::VoiceBusy: return "Busy (Bass / Spark)";
-                case MidiTarget::VoiceSustain: return "Sustain (Bass / Spark)";
-                case MidiTarget::VoiceAttack: return "Attack (Bass) / Fuzz (Haze) / Voicing (Spark)";
+                case MidiTarget::VoiceBusy: return "Busy (Bass / Keys)";
+                case MidiTarget::VoiceSustain: return "Sustain (Bass / Keys)";
+                case MidiTarget::VoiceAttack: return "Attack (Bass) / Fuzz (Haze) / Voicing (Keys)";
                 // Raw CC value maps directly to cleanliness_ (0=dirty..
                 // 1=clean) here, same as the Scene field — the inverted
                 // "Dirt" display/drag direction is a per-voice-card UI
                 // convenience only, not part of the MIDI/Scene contract.
-                case MidiTarget::VoiceCleanliness: return "Dirt (Ambient / Spark, inverted)";
+                case MidiTarget::VoiceCleanliness: return "Dirt (Ambient / Keys, inverted)";
                 case MidiTarget::VoiceEnabledToggle: return "Enabled toggle";
                 case MidiTarget::VoicePitchRangeEvoToggle: return "Evolve: Pitch Range";
                 case MidiTarget::VoiceVolumeEvoToggle: return "Evolve: Volume";
@@ -2654,10 +2664,10 @@ private:
                 case MidiTarget::VoiceMotionEvoToggle: return "Evolve: Motion / Groove / Speed / Drift";
                 case MidiTarget::VoiceComplexityEvoToggle: return "Evolve: Complexity / Wander / Layers / Thickness";
                 case MidiTarget::VoiceDissonanceEvoToggle: return "Evolve: Dissonance";
-                case MidiTarget::VoiceBusyEvoToggle: return "Evolve: Busy (Bass / Spark)";
-                case MidiTarget::VoiceSustainEvoToggle: return "Evolve: Sustain (Bass / Spark)";
-                case MidiTarget::VoiceAttackEvoToggle: return "Evolve: Attack (Bass) / Fuzz (Haze) / Voicing (Spark)";
-                case MidiTarget::VoiceCleanlinessEvoToggle: return "Evolve: Dirt (Ambient / Spark)";
+                case MidiTarget::VoiceBusyEvoToggle: return "Evolve: Busy (Bass / Keys)";
+                case MidiTarget::VoiceSustainEvoToggle: return "Evolve: Sustain (Bass / Keys)";
+                case MidiTarget::VoiceAttackEvoToggle: return "Evolve: Attack (Bass) / Fuzz (Haze) / Voicing (Keys)";
+                case MidiTarget::VoiceCleanlinessEvoToggle: return "Evolve: Dirt (Ambient / Keys)";
                 case MidiTarget::SelectVoice1: return "Voice 1";
                 case MidiTarget::SelectVoice2: return "Voice 2";
                 case MidiTarget::SelectVoice3: return "Voice 3";
