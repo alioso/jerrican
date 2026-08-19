@@ -7,6 +7,7 @@
 
 #include "AudioRecorder.h"
 #include "BassGroovePattern.h"
+#include "SparkChordPattern.h"
 #include "EvolutionEngine.h"
 #include "FastRandom.h"
 #include "Grain.h"
@@ -29,18 +30,19 @@ class JerricanAudioProcessorEditor;  // defined in JerricanEditor.h, included at
 // hosts, offline rendering).
 class JerricanAudioProcessor : public juce::AudioProcessor {
 public:
-    // groove/wander are the same VoiceModel fields the old Motion/
-    // Complexity macros used — voice 0 (Bass) and voice 1 (Ambient) give
-    // them their own bespoke meaning (Bass: rhythmic placement / harmonic
-    // roaming; Ambient: layer-phasing Speed / texture-thickness
-    // Complexity — Complexity's underlying mechanism is unchanged for
-    // Ambient, only relabeled); Spark/Haze keep the exact old numeric
-    // values and exact old behavior (pitch-drift retarget rate /
-    // grain-spawn density). timbre similarly means Material for Ambient
-    // (new DSP — see Grain::triggerAmbient) but is otherwise unchanged for
-    // the other three. busy/sustain are Bass-only, cleanliness is
-    // Ambient-only, attack is Bass-only (envelope shape) *and* reused as
-    // Haze's Fuzz amount — unused by whichever voices don't consume them.
+    // groove/wander/timbre/busy/sustain/cleanliness are all shared,
+    // generic VoiceModel fields — every voice reuses the same slots for
+    // different bespoke meanings rather than growing the schema per voice
+    // (see each voice's trigger*/render*Sample comments in Grain.h/
+    // GrainCloud.h for the specifics): Bass gives groove/wander/busy/
+    // sustain their rhythmic-bassline meaning; Ambient gives timbre/
+    // groove/wander/cleanliness its Material/Speed/Complexity/Dirt
+    // meaning; Haze gives timbre/groove/wander/attack its Texture/Drift/
+    // Layers/Fuzz meaning; Spark gives timbre/groove/wander/busy/sustain/
+    // cleanliness its Mode/Groove/Thickness/Busy/Sustain/Dirt meaning
+    // (chord-comping keyboard voice — see SparkChordPattern.h/
+    // Grain::triggerSpark). attack is otherwise Bass-only (envelope
+    // shape) — unused by whichever voices don't consume a given field.
     struct InitialVoice {
         const char* name;
         bool enabled;
@@ -84,13 +86,20 @@ public:
     // Complexity kept slow/sparse for a glacial Eno-style drift, Material
     // leaning toward Glass (pure) and Cleanliness leaning clean — a
     // deliberately understated starting point, not locked.
+    //
+    // Spark sits mid-register (~95-260Hz, comfortable comping range for
+    // chords), grain duration 150ms-2.5s so Sustain has real range (short
+    // stabs to lingering chords) without going as extreme as Bass's
+    // sustain-a-whole-bar ceiling. Mode starts leaning Piano, modest
+    // Busy/Groove/Thickness/Dirt — a starting point for a voice that's
+    // explicitly expected to need iterating by ear, not locked.
     static constexpr std::array<InitialVoice, 4> kInitialVoices{
         {{"Bass", true, 0.70f, 0.15f, 0.45f, 0.35f, 0.25f, 0.30f, 0.10f, 0.45f, 0.5f, 0.5f, 0.85f, 0,
           110.0f, 4800.0f, Grain::Character::Plucked},
          {"Ambient", true, 0.60f, 0.05f, 0.20f, 0.15f, 0.10f, 0.12f, 0.15f, 0.5f, 0.5f, 0.65f, 0.5f, 0,
           1500.0f, 4000.0f, Grain::Character::Ambient},
-         {"Spark", true, 0.55f, 0.60f, 0.85f, 0.70f, 0.50f, 0.45f, 0.15f, 0.5f, 0.5f, 0.5f, 0.5f, 7,
-          150.0f, 400.0f, Grain::Character::Plucked},
+         {"Spark", true, 0.55f, 0.35f, 0.65f, 0.30f, 0.30f, 0.30f, 0.10f, 0.40f, 0.40f, 0.70f, 0.5f, 7,
+          150.0f, 2500.0f, Grain::Character::Plucked},
          {"Haze", true, 0.50f, 0.15f, 0.35f, 0.75f, 0.20f, 0.15f, 0.15f, 0.5f, 0.5f, 0.5f, 0.0f, 4,
           2000.0f, 5000.0f, Grain::Character::Ambient}}};
 
@@ -136,7 +145,8 @@ public:
                              EvolutionEngine(0xa9c3f501u), EvolutionEngine(0xe1d47b6au)},
           currentBassAccentProfile_(
               MeterTable::generateBassAccentProfile(MeterTable::kMeters[MeterTable::kDefaultMeterIndex])),
-          bassGroovePattern_(0x7a2c91efu, &currentBassAccentProfile_, currentMeterSlotCount_) {
+          bassGroovePattern_(0x7a2c91efu, &currentBassAccentProfile_, currentMeterSlotCount_),
+          sparkChordPattern_(0x2f8b6d3cu, &currentBassAccentProfile_, currentMeterSlotCount_) {
         for (size_t i = 0; i < voices_.size(); ++i) {
             const auto& initial = kInitialVoices[i];
             const float center = (initial.pitchLow + initial.pitchHigh) * 0.5f;
@@ -257,18 +267,17 @@ public:
                 voice.setDissonance(value);
                 evolution.resyncDissonance(value);
                 break;
-            // Bass-only — no-op for the other three voices, since Busy/
-            // Sustain have no defined meaning for them (rather than
-            // silently reinterpreting a Groove-labeled MIDI input as some
-            // other behavior).
+            // Bass's Busy/Sustain, reused as Spark's Busy/Sustain — see the
+            // Spark spawnChordNow call site. No-op for Ambient/Haze, which
+            // have no defined meaning for either.
             case MidiTarget::VoiceBusy:
-                if (focused == 0) {
+                if (focused == 0 || focused == 2) {
                     voice.setBusy(value);
                     evolution.resyncBusy(value);
                 }
                 break;
             case MidiTarget::VoiceSustain:
-                if (focused == 0) {
+                if (focused == 0 || focused == 2) {
                     voice.setSustain(value);
                     evolution.resyncSustain(value);
                 }
@@ -281,10 +290,10 @@ public:
                     evolution.resyncAttack(value);
                 }
                 break;
-            // Ambient-only — same no-op-elsewhere reasoning as Busy/
-            // Sustain above.
+            // Ambient's Cleanliness, reused as Spark's Dirt — see the
+            // Spark spawnChordNow call site. No-op for Bass/Haze.
             case MidiTarget::VoiceCleanliness:
-                if (focused == 1) {
+                if (focused == 1 || focused == 2) {
                     voice.setCleanliness(value);
                     evolution.resyncCleanliness(value);
                 }
@@ -329,7 +338,7 @@ public:
                 break;
             }
             case MidiTarget::VoiceBusyEvoToggle: {
-                if (focused == 0) {
+                if (focused == 0 || focused == 2) {
                     const bool on = !evolution.isBusyEnabled();
                     evolution.setBusyEnabled(on);
                     if (on) evolution.resyncBusy(voice.getBusy());
@@ -337,7 +346,7 @@ public:
                 break;
             }
             case MidiTarget::VoiceSustainEvoToggle: {
-                if (focused == 0) {
+                if (focused == 0 || focused == 2) {
                     const bool on = !evolution.isSustainEnabled();
                     evolution.setSustainEnabled(on);
                     if (on) evolution.resyncSustain(voice.getSustain());
@@ -353,7 +362,7 @@ public:
                 break;
             }
             case MidiTarget::VoiceCleanlinessEvoToggle: {
-                if (focused == 1) {
+                if (focused == 1 || focused == 2) {
                     const bool on = !evolution.isCleanlinessEnabled();
                     evolution.setCleanlinessEnabled(on);
                     if (on) evolution.resyncCleanliness(voice.getCleanliness());
@@ -530,19 +539,38 @@ public:
                         voice.getGroove(), voice.getWander(), voice.getVolume(), voice.getDissonance(),
                         voice.getAttack(), playing && voice.isEnabled(),
                         voice.getRootSemitoneOffset());
-                } else {
-                    // Spark: unchanged continuous stochastic model.
-                    // getGroove()/getWander() are the same underlying
-                    // fields as the old Motion/Complexity (renamed at the
-                    // VoiceModel level when Bass's redesign gave those
-                    // names new meaning for voice 0 only) — values and
-                    // behavior are identical to before.
-                    const float spawnDensity =
-                        (playing && voice.isEnabled()) ? voice.getWander() : 0.0f;
-                    voiceSample = cloud.renderSample(voice.getPitchRangeLow(), voice.getPitchRangeHigh(),
-                                                     voice.getTimbre(), voice.getGroove(), spawnDensity,
-                                                     voice.getVolume(), voice.getDissonance(),
-                                                     voice.getRootSemitoneOffset());
+                } else if (i == 2) {
+                    // Spark: a chord-comping keyboard voice — Piano<->Organ
+                    // <->Wurlitzer morph (Mode, reusing the old Timbre
+                    // slot), diatonic chords (see ChordScale.h) fired on a
+                    // metered pattern (SparkChordPattern, a copy of
+                    // BassGroovePattern's rhythm-mask mechanism extended
+                    // with chord-degree selection) rather than continuous
+                    // stochastic scattering. Groove/Busy/Sustain/Dirt reuse
+                    // the same generic slots Bass/Ambient/Haze already
+                    // established (Motion->Groove, Busy/Sustain from
+                    // Bass's slots, Cleanliness->Dirt from Ambient's slot);
+                    // Thickness reuses the old Complexity/Wander slot
+                    // (chord voicing register spread now, not grain
+                    // density — density comes from Busy instead).
+                    const auto trigger = sparkChordPattern_.update(
+                        onGridBoundary, currentSlot16_, voice.getBusy(), voice.getGroove(),
+                        evolutionAmount, patternClock_.getSamplesPerSubdivision());
+                    if (trigger.has_value() && playing && voice.isEnabled()) {
+                        cloud.spawnChordNow(voice.getPitchRangeLow(), voice.getPitchRangeHigh(),
+                                            voice.getTimbre(), voice.getCleanliness(),
+                                            voice.getWander(), voice.getSustain(),
+                                            voice.getDissonance(), trigger->degree,
+                                            voice.getRootSemitoneOffset());
+                    }
+                    // Thickness (getWander()) doubles as the correlation-
+                    // wander input: tight/close voicings are more
+                    // correlated (need stronger normalization, same
+                    // reasoning as Bass), wide/spread voicings are more
+                    // decorrelated and can use gentler normalization —
+                    // reusing the parameter rather than adding a new one.
+                    voiceSample = cloud.renderActiveGrainsCorrelated(voice.getVolume(),
+                                                                      voice.getWander());
                 }
                 if (voiceIsAudible) {
                     mixedLeft += voiceSample.left;
@@ -743,16 +771,18 @@ public:
             const float wander = randomizeRandom_.nextFloat01();
             const float volume = randomizeRandom_.nextFloat01();
             const float dissonance = randomizeRandom_.nextFloat01();
-            // Bass-only: also reroll Busy/Sustain, its other bespoke
-            // controls — meaningless for Spark/Haze, left untouched.
-            // Ambient-only: same for Cleanliness. Attack is Bass-only
-            // (envelope shape) *and* Haze-only (reused as Fuzz amount).
-            const float busy = i == 0 ? randomizeRandom_.nextFloat01() : voices_[i].getBusy();
-            const float sustain = i == 0 ? randomizeRandom_.nextFloat01() : voices_[i].getSustain();
+            // Bass+Spark: also reroll Busy/Sustain, their shared bespoke
+            // slot — meaningless for Ambient/Haze, left untouched.
+            // Ambient+Spark: same for Cleanliness (Dirt for Spark). Attack
+            // is Bass-only (envelope shape) *and* Haze-only (Fuzz amount).
+            const float busy =
+                (i == 0 || i == 2) ? randomizeRandom_.nextFloat01() : voices_[i].getBusy();
+            const float sustain =
+                (i == 0 || i == 2) ? randomizeRandom_.nextFloat01() : voices_[i].getSustain();
             const float attack =
                 (i == 0 || i == 3) ? randomizeRandom_.nextFloat01() : voices_[i].getAttack();
             const float cleanliness =
-                i == 1 ? randomizeRandom_.nextFloat01() : voices_[i].getCleanliness();
+                (i == 1 || i == 2) ? randomizeRandom_.nextFloat01() : voices_[i].getCleanliness();
 
             voices_[i].setPitchRange(low, high);
             voices_[i].setTimbre(timbre);
@@ -866,6 +896,8 @@ private:
         currentBassAccentProfile_ = MeterTable::generateBassAccentProfile(meter);
         bassGroovePattern_.setAccentProfile(&currentBassAccentProfile_, meter.totalSlots);
         bassGroovePattern_.forceRegenerateNextBoundary();
+        sparkChordPattern_.setAccentProfile(&currentBassAccentProfile_, meter.totalSlots);
+        sparkChordPattern_.forceRegenerateNextBoundary();
         currentMeterSlotCount_ = meter.totalSlots;
         currentSlot16_ = -1;
         currentSlot16Display_.store(-1, std::memory_order_relaxed);
@@ -879,6 +911,7 @@ private:
         currentSlot16_ = -1;
         currentSlot16Display_.store(-1, std::memory_order_relaxed);
         bassGroovePattern_.forceRegenerateNextBoundary();
+        sparkChordPattern_.forceRegenerateNextBoundary();
     }
 
     // Reads the host's transport once per block when Host Sync is
@@ -932,6 +965,7 @@ private:
                 currentSlot16_ = slot - 1;  // the next tick's ++ lands exactly on `slot`
                 patternClock_.reset();
                 bassGroovePattern_.forceRegenerateNextBoundary();
+                sparkChordPattern_.forceRegenerateNextBoundary();
             }
         } else if (!hostPlaying && lastHostPlaying_) {
             isPlaying_.store(false, std::memory_order_relaxed);
@@ -958,6 +992,12 @@ private:
     MeterTable::AccentProfile currentBassAccentProfile_;
     PatternClock patternClock_;
     BassGroovePattern bassGroovePattern_;
+    // Spark shares Bass's clock/meter/accent-profile entirely (same bar-
+    // position counter, same weight table) — both are metered instruments
+    // on the same grid now; a different seed and independent Busy/Groove
+    // values are enough for their rhythms to feel distinct without needing
+    // a second accent-profile table.
+    SparkChordPattern sparkChordPattern_;
     // Shared bar-position counter for Bass — advanced once per
     // PatternClock grid tick. Starts at -1 so the first tick's increment
     // lands on slot 0, not 1.

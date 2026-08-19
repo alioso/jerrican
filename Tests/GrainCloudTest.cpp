@@ -7,10 +7,25 @@ namespace {
 
 constexpr double kSampleRate = 44100.0;
 
+// The old generic continuous-stochastic renderSample()/maybeSpawnGrain()
+// path was removed once every voice got a bespoke spawn method — these
+// tests were written against that generic path, so they now exercise
+// renderHazeSample() instead, since it's the closest surviving equivalent
+// (continuous density-driven spawning gated by an explicit `active` flag,
+// same shape the removed API had). What's being tested (spawn/silence,
+// bounded output, decay, drift scoping, custom duration ranges, Character
+// support, Dissonance) is unchanged — only the call site is.
+Grain::StereoSample render(GrainCloud& cloud, float pitchLow, float pitchHigh, float texture,
+                           float drift, float complexity, float volume, bool active,
+                           float dissonance = 1.0f) {
+    return cloud.renderHazeSample(pitchLow, pitchHigh, texture, drift, complexity, volume,
+                                  dissonance, 0.0f, active);
+}
+
 }  // namespace
 
 int main() {
-    // Spawning: with complexity > 0 and enough samples, grains must become
+    // Spawning: with active and enough samples, grains must become
     // audible (i.e. the cloud stops being silent).
     {
         GrainCloud cloud(1u);
@@ -18,7 +33,7 @@ int main() {
 
         bool everAudible = false;
         for (int i = 0; i < static_cast<int>(kSampleRate); ++i) {
-            const auto sample = cloud.renderSample(0.3f, 0.7f, 0.5f, 0.5f, 1.0f, 1.0f);
+            const auto sample = render(cloud, 0.3f, 0.7f, 0.5f, 0.5f, 1.0f, 1.0f, true);
             if (sample.left != 0.0f || sample.right != 0.0f) {
                 everAudible = true;
             }
@@ -26,7 +41,7 @@ int main() {
         assert(everAudible);
     }
 
-    // With complexity == 0, no new grains ever spawn, so the cloud stays
+    // With active == false, no new grains ever spawn, so the cloud stays
     // silent indefinitely.
     {
         GrainCloud cloud(2u);
@@ -34,7 +49,7 @@ int main() {
 
         bool everAudible = false;
         for (int i = 0; i < static_cast<int>(kSampleRate); ++i) {
-            const auto sample = cloud.renderSample(0.3f, 0.7f, 0.5f, 0.5f, 0.0f, 1.0f);
+            const auto sample = render(cloud, 0.3f, 0.7f, 0.5f, 0.5f, 0.0f, 1.0f, false);
             if (sample.left != 0.0f || sample.right != 0.0f) {
                 everAudible = true;
             }
@@ -48,26 +63,26 @@ int main() {
         cloud.setSampleRate(kSampleRate);
 
         for (int i = 0; i < static_cast<int>(kSampleRate) * 2; ++i) {
-            const auto sample = cloud.renderSample(0.0f, 1.0f, 0.5f, 1.0f, 1.0f, 1.0f);
+            const auto sample = render(cloud, 0.0f, 1.0f, 0.5f, 1.0f, 1.0f, 1.0f, true);
             assert(sample.left >= -1.0f && sample.left <= 1.0f);
             assert(sample.right >= -1.0f && sample.right <= 1.0f);
         }
     }
 
-    // Grains eventually terminate: after spawning for a while, then running
-    // with complexity == 0 for long enough that even the longest grain
-    // (250ms) must have finished, the cloud must fall silent again.
+    // Grains eventually terminate: after spawning for a while, then
+    // running with active == false for long enough that even the longest
+    // grain (250ms) must have finished, the cloud must fall silent again.
     {
         GrainCloud cloud(4u);
         cloud.setSampleRate(kSampleRate);
 
         for (int i = 0; i < static_cast<int>(kSampleRate); ++i) {
-            cloud.renderSample(0.3f, 0.7f, 0.5f, 0.5f, 1.0f, 1.0f);
+            render(cloud, 0.3f, 0.7f, 0.5f, 0.5f, 1.0f, 1.0f, true);
         }
 
         bool audibleAfterDecay = false;
         for (int i = 0; i < static_cast<int>(kSampleRate); ++i) {
-            const auto sample = cloud.renderSample(0.3f, 0.7f, 0.5f, 0.5f, 0.0f, 1.0f);
+            const auto sample = render(cloud, 0.3f, 0.7f, 0.5f, 0.5f, 0.0f, 1.0f, false);
             if (i > static_cast<int>(kSampleRate) / 2 && (sample.left != 0.0f || sample.right != 0.0f)) {
                 audibleAfterDecay = true;
             }
@@ -78,7 +93,7 @@ int main() {
     // rerollDrift() is scoped to the given pitch range: after rerolling,
     // spawned grains should still land within that range regardless of how
     // many times it's rerolled (a prior version drew from the full [0, 1]
-    // range, which the pitch-clamping in maybeSpawnGrain would silently
+    // range, which the pitch-clamping in the spawn path would silently
     // absorb — this at least confirms rerolling repeatedly doesn't crash or
     // push output out of the expected bounded range).
     {
@@ -88,7 +103,7 @@ int main() {
         for (int i = 0; i < 100; ++i) {
             cloud.rerollDrift(0.3f, 0.7f);
             for (int sample = 0; sample < 1000; ++sample) {
-                const auto s = cloud.renderSample(0.3f, 0.7f, 0.5f, 0.8f, 1.0f, 1.0f);
+                const auto s = render(cloud, 0.3f, 0.7f, 0.5f, 0.8f, 1.0f, 1.0f, true);
                 assert(s.left >= -1.0f && s.left <= 1.0f);
                 assert(s.right >= -1.0f && s.right <= 1.0f);
             }
@@ -103,7 +118,7 @@ int main() {
         cloud.setSampleRate(kSampleRate);
 
         for (int i = 0; i < static_cast<int>(kSampleRate); ++i) {
-            const auto sample = cloud.renderSample(0.1f, 0.2f, 0.2f, 0.1f, 0.2f, 1.0f);
+            const auto sample = render(cloud, 0.1f, 0.2f, 0.2f, 0.1f, 0.2f, 1.0f, true);
             assert(sample.left >= -1.0f && sample.left <= 1.0f);
             assert(sample.right >= -1.0f && sample.right <= 1.0f);
         }
@@ -118,7 +133,7 @@ int main() {
 
         bool everAudible = false;
         for (int i = 0; i < static_cast<int>(kSampleRate); ++i) {
-            const auto sample = cloud.renderSample(0.4f, 0.65f, 0.4f, 0.3f, 1.0f, 1.0f);
+            const auto sample = render(cloud, 0.4f, 0.65f, 0.4f, 0.3f, 1.0f, 1.0f, true);
             assert(sample.left >= -1.0f && sample.left <= 1.0f);
             assert(sample.right >= -1.0f && sample.right <= 1.0f);
             if (sample.left != 0.0f || sample.right != 0.0f) {
@@ -129,7 +144,7 @@ int main() {
 
         bool audibleAfterDecay = false;
         for (int i = 0; i < static_cast<int>(kSampleRate); ++i) {
-            const auto sample = cloud.renderSample(0.4f, 0.65f, 0.4f, 0.3f, 0.0f, 1.0f);
+            const auto sample = render(cloud, 0.4f, 0.65f, 0.4f, 0.3f, 0.0f, 1.0f, false);
             if (i > static_cast<int>(kSampleRate) / 2 && (sample.left != 0.0f || sample.right != 0.0f)) {
                 audibleAfterDecay = true;
             }
@@ -148,7 +163,7 @@ int main() {
 
         bool everAudible = false;
         for (int i = 0; i < static_cast<int>(kSampleRate); ++i) {
-            const auto sample = cloud.renderSample(0.3f, 0.7f, 0.5f, 0.5f, 1.0f, 1.0f, 0.0f);
+            const auto sample = render(cloud, 0.3f, 0.7f, 0.5f, 0.5f, 1.0f, 1.0f, true, 0.0f);
             assert(sample.left >= -1.0f && sample.left <= 1.0f);
             assert(sample.right >= -1.0f && sample.right <= 1.0f);
             if (sample.left != 0.0f || sample.right != 0.0f) {

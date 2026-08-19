@@ -26,22 +26,6 @@ public:
         float right = 0.0f;
     };
 
-    // pan is 0 (full left) .. 1 (full right), 0.5 = center. Single discrete
-    // waveform, picked by the caller — used by every voice except Bass
-    // (Drone/Spark/Haze; see GrainCloud::pickWaveform). Filter sweep (if
-    // Character::Plucked) uses the fixed default cutoff range.
-    void trigger(VoiceOscillator::Waveform waveform, double sampleRate, float pitch,
-                 float durationMs, float pan, Character character) {
-        oscillator_.setWaveform(waveform);
-        oscillator_.setSampleRate(sampleRate);
-        oscillator_.reset();
-        mode_ = RenderMode::Single;
-
-        beginLife(sampleRate, pitch, durationMs, pan, character);
-        filterStartMultiple_ = kDefaultFilterStartMultiple;
-        filterEndMultiple_ = kDefaultFilterEndMultiple;
-    }
-
     // Bass-only: a fixed electric-bass-style core tone — a fundamental
     // Sine, a strong second harmonic (one octave up) for the "boom"/body
     // a bare fundamental doesn't have, only a whisper of Saw (this is a
@@ -331,6 +315,61 @@ public:
         hazeCabFilterCoefficient_ = cabCoefficient;
     }
 
+    // Spark-only: an explicit morph across "mode" — Piano (0, Sine+Saw
+    // blend, bright at the attack) -> Organ (0.5, Sine + a locked 2nd
+    // harmonic, pure/drawbar-like) -> Wurlitzer (1, the existing FM
+    // oscillator, already used this way for Ambient's Bell) — same
+    // 2-segment-crossfade shape as triggerAmbient's Material morph.
+    // `dirt` is a uniform grit/detune amount across the whole Mode range
+    // (not mode-conditional "honky piano vs growly wurlitzer" — a
+    // deliberate v1 simplification, flagged as a likely follow-up once
+    // this is audible): a detuned unison layer plus a light version of
+    // the same tanh-saturation idiom Bass/Haze already use.
+    void triggerSpark(double sampleRate, float pitch, float durationMs, float pan, float mode,
+                      float dirt) {
+        sineOscillator_.setWaveform(VoiceOscillator::Waveform::Sine);
+        sineOscillator_.setSampleRate(sampleRate);
+        sineOscillator_.reset();
+        fmOscillator_.setWaveform(VoiceOscillator::Waveform::Fm);
+        fmOscillator_.setSampleRate(sampleRate);
+        fmOscillator_.reset();
+        sparkDetuneOsc_.setWaveform(VoiceOscillator::Waveform::Sine);
+        sparkDetuneOsc_.setSampleRate(sampleRate);
+        sparkDetuneOsc_.reset();
+        harmonicPhase_ = 0.0;
+        mode_ = RenderMode::SparkChord;
+
+        const float clampedMode = std::max(0.0f, std::min(1.0f, mode));
+        if (clampedMode < 0.5f) {
+            const float u = clampedMode * 2.0f;
+            sparkPianoWeight_ = 1.0f - u;
+            sparkOrganWeight_ = u;
+            sparkWurlitzerWeight_ = 0.0f;
+        } else {
+            const float u = (clampedMode - 0.5f) * 2.0f;
+            sparkPianoWeight_ = 0.0f;
+            sparkOrganWeight_ = 1.0f - u;
+            sparkWurlitzerWeight_ = u;
+        }
+
+        const float clampedDirt = std::max(0.0f, std::min(1.0f, dirt));
+        sparkDirtDetuneWeight_ = lerp(0.0f, kSparkMaxDirtDetuneWeight, clampedDirt);
+        sparkDriveAmount_ = lerp(kSparkMinDrive, kSparkMaxDrive, clampedDirt);
+        sparkLoudnessCompensation_ = lerp(1.0f, kSparkMaxDriveLoudnessCompensation, clampedDirt);
+        // Character::Plucked (below) applies a filter sweep to every grain
+        // automatically — left at its class defaults (kDefaultFilterStart/
+        // EndMultiple) this ran at full, fixed intensity on every note
+        // regardless of any knob, which is what read as a constant
+        // "underwater"/wah coloration even with Dirt at 0. Tied to Dirt
+        // the same way Bass ties its own sweep to Timbre/Dirt: both ends
+        // collapse to the same flat cutoff (no sweep, no coloration) at
+        // Dirt=0, opening up into a real sweep only as Dirt rises.
+        filterStartMultiple_ = lerp(kSparkFilterFlatMultiple, kSparkFilterStartMultiple, clampedDirt);
+        filterEndMultiple_ = lerp(kSparkFilterFlatMultiple, kSparkFilterEndMultiple, clampedDirt);
+
+        beginLife(sampleRate, pitch, durationMs, pan, Character::Plucked);
+    }
+
     bool isActive() const { return remainingLifeSamples_ > 0; }
 
     StereoSample renderSample() {
@@ -344,7 +383,11 @@ public:
         float sample;
         switch (mode_) {
             case RenderMode::Single:
-                sample = oscillator_.renderSample(pitch_);
+                // Idle/never-triggered default — unreachable in practice
+                // (isActive() is false whenever mode_ is still this value,
+                // so renderSample() returns before reaching here), kept
+                // only as mode_'s default sentinel.
+                sample = 0.0f;
                 break;
             case RenderMode::BassBlend: {
                 // Driven directly from fundamentalHz_ rather than through
@@ -452,6 +495,47 @@ public:
                     (hazeCabFilterState1_ - hazeCabFilterState2_) * hazeCabFilterCoefficient_;
                 const float cabbed = shaped + (hazeCabFilterState2_ - shaped) * hazeCabBlend_;
                 sample = cabbed * hazeLoudnessCompensation_;
+                break;
+            }
+            case RenderMode::SparkChord: {
+                const float sineSample = sineOscillator_.renderSample(pitch_);
+                const float fmSample = fmOscillator_.renderSample(pitch_);
+
+                // Locked octave-up 2nd harmonic, driven directly from
+                // fundamentalHz_ like Bass's core tone does — not tied to
+                // VoiceOscillator's clamped pitch interface. Shared by
+                // Piano and Organ below, each with its own envelope.
+                const double harmonicIncrement = 2.0 * fundamentalHz_ / sampleRate_;
+                const float secondHarmonic = static_cast<float>(std::sin(harmonicPhase_ * twoPi));
+                harmonicPhase_ += harmonicIncrement;
+                harmonicPhase_ -= std::floor(harmonicPhase_);
+
+                // Piano: fundamental sine plus a brighter 2nd harmonic
+                // that decays much faster than the fundamental — the
+                // hammer-strike brightness fading into a purer sustained
+                // tone, the same "brightness settles over the note's life"
+                // idea as Bass's edgeEnvelope. A flat Sine+Saw blend (an
+                // earlier version of this) never evolves and Saw doesn't
+                // belong in a piano tone at all — nothing here reads as a
+                // struck string without this decay.
+                const float elapsedMs = t * noteDurationMs_;
+                const float pianoBrightness =
+                    kSparkPianoSustainFloor +
+                    (1.0f - kSparkPianoSustainFloor) * std::exp(-elapsedMs / kSparkPianoDecayMs);
+                const float piano = kSparkPianoFundamentalWeight * sineSample +
+                                    kSparkPianoHarmonicWeight * pianoBrightness * secondHarmonic;
+                const float organ = 0.7f * sineSample + 0.3f * secondHarmonic;
+                const float wurlitzer = fmSample;
+                float raw = sparkPianoWeight_ * piano + sparkOrganWeight_ * organ +
+                           sparkWurlitzerWeight_ * wurlitzer;
+
+                // Dirt: a detuned unison layer (honky-tonk-style beating)
+                // additively mixed in, then a light version of the same
+                // tanh-saturation idiom Bass/Haze already use for grit.
+                const float detuneSample = sparkDetuneOsc_.renderSample(pitch_ + kSparkDetuneAmount);
+                raw += detuneSample * sparkDirtDetuneWeight_;
+                sample = (std::tanh(raw * sparkDriveAmount_) / std::tanh(sparkDriveAmount_)) *
+                        sparkLoudnessCompensation_;
                 break;
             }
         }
@@ -649,6 +733,31 @@ private:
     // top wasn't needed and only softened the result.
     static constexpr float kHazeCabCutoffHz = 18000.0f;
 
+    // Spark's Dirt (triggerSpark) — a v1 simplification, uniform across
+    // the whole Mode range rather than mode-conditional character. Detune
+    // expressed in normalized-pitch units (same reasoning as Haze's unison
+    // detune — exponential mapping means a fixed offset is a fixed
+    // proportional/cents detune everywhere, not a fixed Hz amount).
+    // Drive/compensation follow the same decoupled-tanh idiom as Bass/Haze,
+    // kept gentle — this is meant to read as "grit," not a fuzz stage.
+    static constexpr float kSparkDetuneAmount = 0.006f;
+    static constexpr float kSparkMaxDirtDetuneWeight = 0.6f;
+    static constexpr float kSparkMinDrive = 0.05f;
+    static constexpr float kSparkMaxDrive = 6.0f;
+    static constexpr float kSparkMaxDriveLoudnessCompensation = 0.85f;
+    // Spark's filter-sweep range, tied to Dirt (same shape as Bass's
+    // kBassFilterFlatMultiple/StartMultiple/EndMultiple) — flat/no-sweep
+    // at Dirt=0, a real brightness-decay sweep opening up as Dirt rises.
+    static constexpr float kSparkFilterStartMultiple = 8.0f;
+    static constexpr float kSparkFilterEndMultiple = 4.0f;
+    static constexpr float kSparkFilterFlatMultiple = 6.0f;
+    // Piano's fundamental/2nd-harmonic weights and brightness decay (see
+    // render path) — same shape as Bass's kEdgeSustainFloor/kEdgeDecayMs.
+    static constexpr float kSparkPianoFundamentalWeight = 0.75f;
+    static constexpr float kSparkPianoHarmonicWeight = 0.5f;
+    static constexpr float kSparkPianoSustainFloor = 0.25f;
+    static constexpr float kSparkPianoDecayMs = 220.0f;
+
     static float hannEnvelope(float t) { return 0.5f - 0.5f * std::cos(twoPi * t); }
 
     static float percussiveEnvelope(float t) {
@@ -707,9 +816,8 @@ private:
         return filterState_;
     }
 
-    enum class RenderMode { Single, BassBlend, AmbientBlend, HazeBlend };
+    enum class RenderMode { Single, BassBlend, AmbientBlend, HazeBlend, SparkChord };
 
-    VoiceOscillator oscillator_;       // used by trigger()
     VoiceOscillator sineOscillator_;   // used by triggerBlended()/triggerAmbient()
     VoiceOscillator sawOscillator_;    // used by triggerBlended()/triggerAmbient()
     VoiceOscillator noiseOscillator_;  // used by triggerBlended()/triggerAmbient()
@@ -746,6 +854,13 @@ private:
     float hazeCabFilterState2_ = 0.0f;        // triggerHaze() only
     float hazeCabFilterCoefficient_ = 1.0f;   // triggerHaze() only
     float hazeCabBlend_ = 0.0f;               // triggerHaze() only
+    VoiceOscillator sparkDetuneOsc_;          // triggerSpark() only
+    float sparkPianoWeight_ = 0.0f;           // triggerSpark() only
+    float sparkOrganWeight_ = 0.0f;           // triggerSpark() only
+    float sparkWurlitzerWeight_ = 0.0f;       // triggerSpark() only
+    float sparkDirtDetuneWeight_ = 0.0f;      // triggerSpark() only
+    float sparkDriveAmount_ = 1.0f;           // triggerSpark() only
+    float sparkLoudnessCompensation_ = 1.0f;  // triggerSpark() only
     Character character_ = Character::Ambient;
     float pitch_ = 0.5f;
     double sampleRate_ = 44100.0;

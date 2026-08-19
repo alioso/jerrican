@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 
+#include "ChordScale.h"
 #include "FastRandom.h"
 #include "Grain.h"
 #include "HarmonicScale.h"
@@ -16,32 +17,31 @@
 // the UI thread) — the UI only ever passes in the current macro values by
 // value each call.
 //
-// Spark uses renderSample() exactly as before — continuous stochastic
-// grain spawning driven by Motion (pitch drift retarget rate) and
-// Complexity (grain density). Ambient uses renderAmbientSample() and Haze
-// uses renderHazeSample() — Speed/Drift (Motion relabeled) directly scale
-// grain duration (see maybeSpawnAmbientGrain/maybeSpawnHazeGrain; this is
-// the dominant driver of how fast either voice feels like it's evolving,
-// unlike Spark where Motion only nudges a hidden pitch-drift retarget
-// rate), Layers (Complexity relabeled) drives grain density — triggering
-// grains via Grain::triggerAmbient/triggerHaze instead of the random
-// pickWaveform lottery. Ambient renders via renderActiveGrainsCorrelated
-// (like Bass) since its long, narrow-pitch-spread overlapping grains are
-// correlated enough that the plain sqrt(N) normalization let them hit the
-// hard clamp and produce audible digital-clipping crackle; Haze also
-// renders via renderActiveGrainsCorrelated but pinned to wander=1.0, i.e.
-// the same sqrt(N) target renderActiveGrains uses — just reached via a
-// glide instead of instantly. Haze's fuzz stage (see triggerHaze) makes
-// heavily-saturated overlapping grains sum close to linearly and hit the
-// hard clamp several times a second as grain count fluctuates; snapping
-// the gain on every one of those hits was audible as a sharp "wave drop".
-// A fully-correlated (stronger) exponent was tried here previously and
-// produced its own audible "wave" duck/recover under long sustained
-// notes, so the exponent stays gentle — only the smoothing was worth
-// keeping. Bass instead uses
-// spawnGrainNow(), called directly by JerricanAudioProcessor's metered
-// scheduler (see BassGroovePattern.h) — its rhythm comes entirely from
-// the beat grid now, with zero leftover stochastic spawning texture.
+// All four voices now have bespoke, metered/scheduled spawn paths — none
+// of them use continuous stochastic scattering anymore (Spark was the
+// last holdout, until its chord-comping redesign). Ambient uses
+// renderAmbientSample() and Haze uses renderHazeSample() — Speed/Drift
+// (Motion relabeled) directly scale grain duration (see
+// maybeSpawnAmbientGrain/maybeSpawnHazeGrain; this is the dominant driver
+// of how fast either voice feels like it's evolving), Layers (Complexity
+// relabeled) drives grain density — triggering grains via
+// Grain::triggerAmbient/triggerHaze. Ambient renders via
+// renderActiveGrainsCorrelated (like Bass) since its long, narrow-pitch-
+// spread overlapping grains are correlated enough that the plain sqrt(N)
+// normalization let them hit the hard clamp and produce audible digital-
+// clipping crackle; Haze also renders via renderActiveGrainsCorrelated but
+// pinned to wander=1.0, i.e. the same sqrt(N) target renderActiveGrains
+// uses — just reached via a glide instead of instantly. Haze's fuzz stage
+// (see triggerHaze) makes heavily-saturated overlapping grains sum close
+// to linearly and hit the hard clamp several times a second as grain count
+// fluctuates; snapping the gain on every one of those hits was audible as
+// a sharp "wave drop". A fully-correlated (stronger) exponent was tried
+// here previously and produced its own audible "wave" duck/recover under
+// long sustained notes, so the exponent stays gentle — only the smoothing
+// was worth keeping. Bass uses spawnGrainNow(), called directly by
+// JerricanAudioProcessor's metered scheduler (see BassGroovePattern.h);
+// Spark uses spawnChordNow() the same way (see SparkChordPattern.h),
+// spawning up to 4 grains at once — one per chord tone — instead of one.
 class GrainCloud {
 public:
     static constexpr int kMaxGrains = 24;
@@ -79,17 +79,6 @@ public:
     void rerollDrift(float pitchRangeLow, float pitchRangeHigh) {
         driftTarget_ = random_.nextFloatRange(pitchRangeLow, pitchRangeHigh);
         breathingTarget_ = random_.nextFloatRange(0.3f, 1.0f);
-    }
-
-    // Unchanged path — Drone/Spark/Haze. motion drives pitch-drift retarget
-    // rate, complexity drives continuous stochastic grain spawn rate.
-    Grain::StereoSample renderSample(float pitchRangeLow, float pitchRangeHigh, float timbre,
-                                      float motion, float complexity, float volume,
-                                      float dissonance = 1.0f, int rootSemitoneOffset = 0) {
-        updateDrift(pitchRangeLow, pitchRangeHigh, motion);
-        maybeSpawnGrain(pitchRangeLow, pitchRangeHigh, timbre, complexity, dissonance,
-                        rootSemitoneOffset);
-        return renderActiveGrains(volume);
     }
 
     // Ambient-only. updateDrift() (pitch-drift retarget rate) still runs
@@ -202,6 +191,84 @@ public:
         }
     }
 
+    // Spark-only: places up to 4 grains at once — one per chord tone —
+    // bypassing the continuous stochastic spawn path entirely, mirroring
+    // spawnGrainNow's "called only when the metered scheduler fires"
+    // shape. ChordScale::chordTones returns normalized pitches already
+    // centered/spread by Thickness; the chord is recentered on this
+    // voice's configured Pitch Range (see below for how) so Pitch Range
+    // still means something for Spark, without disturbing the actual
+    // intervals between chord tones. Each tone gets a slightly different
+    // pan for stereo width — a chord voiced dead center reads as mono/flat
+    // in a way a single bass note doesn't.
+    //
+    // ChordScale::chordTones already returns pitches in the same absolute
+    // normalized-pitch space (0=55Hz..1=880Hz, linear in semitones) every
+    // other voice uses, with real semitone intervals between tones, and
+    // already on the shared pentatonic scale (see ChordScale.h). Two
+    // earlier versions of this method got this wrong in different ways:
+    // the first *rescaled* the output into the Pitch Range band
+    // (low + tone*span), linearly compressing every interval by the
+    // band's width fraction — chords turned into dissonant clusters. The
+    // second shifted the chord *additively* by an arbitrary continuous
+    // amount (rangeCenter - centroid) to recenter it on Pitch Range —
+    // that preserved intervals but, since the shift wasn't constrained to
+    // a whole number of octaves, it silently transposed the chord's
+    // actual pitch classes, undoing ChordScale's pentatonic guarantee —
+    // "modulating" every time Pitch Range or Thickness (which can nudge
+    // the centroid) changed. The fix: only ever shift by a whole number
+    // of octaves (rounded to the nearest one) — moves the chord's
+    // register toward Pitch Range's center same as before, but a 12-
+    // semitone shift can never change which pitch classes are sounding,
+    // so the key is now unconditionally stable regardless of Pitch
+    // Range/Thickness/anything else.
+    void spawnChordNow(float pitchRangeLow, float pitchRangeHigh, float mode, float dirt,
+                       float thickness, float sustain, float dissonance, int degree,
+                       int rootSemitoneOffset) {
+        const auto tones = ChordScale::chordTones(degree, /*seventh=*/true, rootSemitoneOffset,
+                                                   thickness, dissonance, random_);
+        const float low = std::min(pitchRangeLow, pitchRangeHigh);
+        const float high = std::max(pitchRangeLow, pitchRangeHigh);
+        const float rangeCenter = (low + high) * 0.5f;
+
+        float centroid = 0.0f;
+        for (float t : tones) {
+            centroid += t;
+        }
+        centroid /= static_cast<float>(tones.size());
+        constexpr float kSemitonesPerRange = 48.0f;
+        const float octaveShiftCount =
+            std::round((rangeCenter - centroid) * kSemitonesPerRange / 12.0f);
+        const float shift = octaveShiftCount * 12.0f / kSemitonesPerRange;
+
+        const float clampedSustain = std::max(0.0f, std::min(1.0f, sustain));
+        const float centerDurationMs =
+            minGrainDurationMs_ + (maxGrainDurationMs_ - minGrainDurationMs_) * clampedSustain;
+        const float jitterRangeMs = (maxGrainDurationMs_ - minGrainDurationMs_) * 0.1f;
+
+        std::size_t toneIndex = 0;
+        for (auto& grain : grains_) {
+            if (toneIndex >= tones.size()) {
+                break;
+            }
+            if (grain.isActive()) {
+                continue;
+            }
+
+            const float pitch = std::max(0.0f, std::min(1.0f, tones[toneIndex] + shift));
+            const float durationMs = std::max(
+                10.0f, centerDurationMs + random_.nextFloatRange(-jitterRangeMs, jitterRangeMs));
+            // Spreads the 4 tones across the stereo field (root/3rd left
+            // of center, 5th/7th right), plus a little jitter so it's not
+            // perfectly mechanical.
+            const float basePan = 0.5f + (static_cast<float>(toneIndex) / 3.0f - 0.5f) * 0.4f;
+            const float pan = basePan + random_.nextFloatRange(-0.05f, 0.05f);
+
+            grain.triggerSpark(sampleRate_, pitch, durationMs, pan, mode, dirt);
+            ++toneIndex;
+        }
+    }
+
     // Sums every currently-active grain into this sample's stereo output —
     // called every sample by both renderSample() (after its own spawn
     // decision) and, for Bass, directly by JerricanAudioProcessor once per
@@ -307,50 +374,15 @@ private:
         breathingGain_ += (breathingTarget_ - breathingGain_) * smoothingCoefficient;
     }
 
-    void maybeSpawnGrain(float low, float high, float timbre, float complexity, float dissonance,
-                         int rootSemitoneOffset) {
-        const float grainsPerSecond = std::max(0.0f, complexity) * maxGrainsPerSecond;
-        const float spawnProbabilityPerSample = grainsPerSecond / static_cast<float>(sampleRate_);
-        if (random_.nextFloat01() >= spawnProbabilityPerSample) {
-            return;
-        }
-
-        for (auto& grain : grains_) {
-            if (grain.isActive()) {
-                continue;
-            }
-
-            const float spread = (high - low) * localSpreadFraction;
-            const float lo = std::max(low, std::min(high, driftCenter_ - spread));
-            const float hi = std::max(low, std::min(high, driftCenter_ + spread));
-            const float rawPitch = random_.nextFloatRange(std::min(lo, hi), std::max(lo, hi));
-
-            // Dissonance 0 = fully quantized to this voice's (rooted)
-            // consonant scale, 1 = fully free/continuous like before this
-            // macro existed. rootSemitoneOffset lets different voices
-            // quantize to different degrees of the same scale shape,
-            // rather than only ever landing on identical pitch classes.
-            const float quantizedPitch = HarmonicScale::quantize(rawPitch, rootSemitoneOffset);
-            const float pitch = quantizedPitch + (rawPitch - quantizedPitch) * dissonance;
-
-            const float durationMs = random_.nextFloatRange(minGrainDurationMs_, maxGrainDurationMs_);
-            const float pan = random_.nextFloat01();
-
-            grain.trigger(pickWaveform(timbre), sampleRate_, pitch, durationMs, pan, character_);
-            return;
-        }
-    }
-
-    // Ambient-only equivalent of maybeSpawnGrain — same pitch-spread/
-    // Dissonance shape, calling triggerAmbient with Material/Cleanliness
-    // instead of trigger(pickWaveform(timbre)), with three differences:
-    // Layers=0 is floored above true zero (a pad going fully silent
-    // because a knob hit its exact minimum isn't "sparse", it's broken —
-    // same reasoning as Bass's Busy floor); the density ceiling is its
-    // own, much lower than maxGrainsPerSecond (that constant assumes
-    // short instrument-like grains; Ambient's grains last seconds each,
-    // so even a handful of new layers per second already means a very
-    // dense overlapping wash); and Speed directly scales grain duration —
+    // Ambient-only equivalent of the old stochastic single-note spawn path
+    // (removed — Bass/Ambient/Haze/Spark all now have bespoke spawn
+    // methods, nothing calls the generic path anymore). Layers=0 is
+    // floored above true zero (a pad going fully silent because a knob hit
+    // its exact minimum isn't "sparse", it's broken — same reasoning as
+    // Bass's Busy floor); the density ceiling (kMaxAmbientGrainsPerSecond)
+    // is deliberately low — Ambient's grains last seconds each, so even a
+    // handful of new layers per second already means a very dense
+    // overlapping wash; and Speed directly scales grain duration —
     // the dominant, clearly-audible driver of how fast this pad's layers
     // turn over and feel like they're moving, unlike the barely-perceptible
     // pitch-drift-retarget effect Motion/Speed has via updateDrift() alone.
@@ -433,27 +465,10 @@ private:
 
     static float lerp(float a, float b, float t) { return a + (b - a) * t; }
 
-    VoiceOscillator::Waveform pickWaveform(float timbre) {
-        const float position = std::max(0.0f, std::min(1.0f, timbre)) * 3.0f;  // 0..3
-        const float jittered =
-            std::max(0.0f, std::min(3.0f, position + random_.nextFloatRange(-0.75f, 0.75f)));
-        switch (static_cast<int>(jittered + 0.5f)) {
-            case 0:
-                return VoiceOscillator::Waveform::Sine;
-            case 1:
-                return VoiceOscillator::Waveform::Saw;
-            case 2:
-                return VoiceOscillator::Waveform::Fm;
-            default:
-                return VoiceOscillator::Waveform::Noise;
-        }
-    }
-
     static constexpr float smoothingCoefficient = 0.0005f;
     static constexpr float driftPickRateMinHz = 0.05f;
     static constexpr float driftPickRateSpanHz = 0.45f;
     static constexpr float localSpreadFraction = 0.15f;
-    static constexpr float maxGrainsPerSecond = 40.0f;
     static constexpr float kWanderSpreadFraction = 0.35f;
     // This gain follower is shared across the whole cloud's mixed output,
     // not per-grain — so on a long Sustain=1 note, every subsequent note

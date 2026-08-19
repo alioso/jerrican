@@ -131,10 +131,20 @@ public:
             "Layers - how many notes are sounding at once, sparse to "
             "dense.\n\n"
             "SPARK\n"
-            "The remaining voice uses one general-purpose control set: "
-            "Timbre - blends grain character, smooth to metallic/"
-            "textured. Motion - how far the sampling point wanders within "
-            "Pitch Range. Complexity - how dense the grain cloud is.\n\n"
+            "A chord-comping keyboard voice - fires diatonic chords on a "
+            "metered pattern rather than single scattered notes.\n"
+            "Mode - a continuous morph, Piano to Organ to Wurlitzer.\n"
+            "Dirt - a grit/detune amount layered on top, across the whole "
+            "Mode range.\n"
+            "Thickness - chord voicing spread: 0 is close position, 1 "
+            "opens the voicing out across a wider register.\n"
+            "Groove - rhythmic feel, same role as Bass's Groove: 0 locks "
+            "tightly to the beat grid, 1 loosens the timing/velocity.\n"
+            "Busy - how often chords land; Sustain - how long each chord "
+            "rings out, short stabs to lingering pads.\n"
+            "Harmony is diatonic to the current scale/key for now - chord "
+            "progressions favor common tonal moves (I-IV-V-vi and "
+            "similar) rather than picking degrees at random.\n\n"
             "Each control has its own small Evolution switch (on by default, "
             "teal) - turn one off to keep it under manual control while the "
             "rest keep drifting.\n\n"
@@ -372,8 +382,8 @@ public:
                 voiceRows_[i] = std::make_unique<HazeVoiceRow>(processor_.voice(i),
                                                                 processor_.evolutionEngine(i), this);
             } else {
-                voiceRows_[i] = std::make_unique<GenericVoiceRow>(processor_.voice(i),
-                                                                   processor_.evolutionEngine(i), this);
+                voiceRows_[i] = std::make_unique<SparkVoiceRow>(processor_.voice(i),
+                                                                 processor_.evolutionEngine(i), this);
             }
             addAndMakeVisible(*voiceRows_[i]);
         }
@@ -660,13 +670,14 @@ public:
     }
 
 private:
-    // Shared base for a voice "card": name + LED enable indicator, a
-    // full-width Pitch Range band, and a Key combo — the four controls
-    // that stay universal and unchanged across every voice, including
-    // Bass. Subclasses (GenericVoiceRow for Drone/Spark/Haze, BassVoiceRow
-    // for Bass) add their own bespoke knob layout and Evolution toggle
-    // row below the shared divider. Visuals come from JerricanLookAndFeel
-    // — this class only owns layout and VoiceModel/EvolutionEngine wiring.
+    // Shared base for a voice "card": name + Solo/enable toggles, a
+    // full-width Pitch Range band, and a Key combo — the controls that
+    // stay universal and unchanged across every voice. Each of the four
+    // voices now has its own bespoke subclass (BassVoiceRow, AmbientVoiceRow,
+    // SparkVoiceRow, HazeVoiceRow) adding its own knob layout and Evolution
+    // toggle row below the shared divider. Visuals come from
+    // JerricanLookAndFeel — this class only owns layout and VoiceModel/
+    // EvolutionEngine wiring.
     class VoiceRowBase : public juce::Component,
                          protected juce::Button::Listener,
                          protected juce::Slider::Listener {
@@ -885,27 +896,39 @@ private:
     };
 
     // Spark's card (the sole remaining user — Bass/Ambient/Haze each grew
-    // their own bespoke class): Volume alone left, Timbre/Motion/
-    // Complexity/Dissonance in a shared-column-width 2-row grid on the
-    // right, same template as Bass/Ambient/Haze use — see
-    // AmbientVoiceRow::resized() for the reference shape.
-    class GenericVoiceRow : public VoiceRowBase {
+    // their own bespoke class): a chord-comping keyboard voice — Volume
+    // alone left, then a 3+4 grid on the right (row 1: Mode/Dirt/Thickness
+    // — the tone-shaping trio; row 2: Groove/Busy/Sustain/Dissonance — the
+    // pattern/harmony trio + Dissonance), same shape as BassVoiceRow's
+    // card. Mode reuses the old Timbre slot (getTimbre/setTimbre — a
+    // continuous Piano<->Organ<->Wurlitzer morph now, see
+    // Grain::triggerSpark); Dirt reuses Ambient's Cleanliness slot, same
+    // inverted-display convention (slider shows 1-getCleanliness());
+    // Thickness reuses the old Complexity slot (getWander/setWander —
+    // chord voicing register spread now, see ChordScale::chordTones, not
+    // grain density); Groove/Busy/Sustain reuse Bass's slots directly
+    // (getGroove/getBusy/getSustain — same rhythmic-pattern meaning,
+    // driving SparkChordPattern instead of BassGroovePattern).
+    class SparkVoiceRow : public VoiceRowBase {
     public:
-        GenericVoiceRow(VoiceModel& voice, EvolutionEngine& evolutionEngine,
-                        JerricanAudioProcessorEditor* owner)
+        SparkVoiceRow(VoiceModel& voice, EvolutionEngine& evolutionEngine,
+                      JerricanAudioProcessorEditor* owner)
             : VoiceRowBase(voice, evolutionEngine, owner) {
             setUpKnob(volumeSlider_, volumeLabel_, "Volume");
             volumeSlider_.setValue(voiceRef_.getVolume());
+            setUpKnob(modeSlider_, modeLabel_, "Mode");
+            modeSlider_.setValue(voiceRef_.getTimbre());
+            setUpKnob(dirtSlider_, dirtLabel_, "Dirt");
+            dirtSlider_.setValue(1.0f - voiceRef_.getCleanliness());
+            setUpKnob(thicknessSlider_, thicknessLabel_, "Thickness");
+            thicknessSlider_.setValue(voiceRef_.getWander());
 
-            setUpKnob(timbreSlider_, timbreLabel_, "Timbre");
-            timbreSlider_.setValue(voiceRef_.getTimbre());
-
-            setUpKnob(motionSlider_, motionLabel_, "Motion");
-            motionSlider_.setValue(voiceRef_.getGroove());
-
-            setUpKnob(complexitySlider_, complexityLabel_, "Complexity");
-            complexitySlider_.setValue(voiceRef_.getWander());
-
+            setUpKnob(grooveSlider_, grooveLabel_, "Groove");
+            grooveSlider_.setValue(voiceRef_.getGroove());
+            setUpKnob(busySlider_, busyLabel_, "Busy");
+            busySlider_.setValue(voiceRef_.getBusy());
+            setUpKnob(sustainSlider_, sustainLabel_, "Sustain");
+            sustainSlider_.setValue(voiceRef_.getSustain());
             setUpKnob(dissonanceSlider_, dissonanceLabel_, "Dissonance");
             dissonanceSlider_.setValue(voiceRef_.getDissonance());
 
@@ -921,8 +944,8 @@ private:
             }
         }
 
-        // Same Volume-alone-left + shared-column-width 2-row grid template
-        // as Bass/Ambient/Haze — see AmbientVoiceRow::resized() for the
+        // Same Volume-alone-left + shared-column-width 3+4 grid template
+        // as BassVoiceRow — see AmbientVoiceRow::resized() for the
         // reference shape this copies.
         void resized() override {
             constexpr int padding = 14;
@@ -955,12 +978,14 @@ private:
 
             const int rightX = padding + leftColumnWidth + 10;
             const int rightWidth = contentWidth - leftColumnWidth - 10;
-            constexpr int gridCols = 3;
+            constexpr int row1Count = 3;
+            constexpr int row2Count = 4;
+            constexpr int gridCols = row2Count;
             const int colWidth = rightWidth / gridCols;
 
-            juce::Slider* row1Knobs[gridCols] = {&timbreSlider_, &motionSlider_, &complexitySlider_};
-            juce::Label* row1Labels[gridCols] = {&timbreLabel_, &motionLabel_, &complexityLabel_};
-            for (int i = 0; i < gridCols; ++i) {
+            juce::Slider* row1Knobs[row1Count] = {&modeSlider_, &dirtSlider_, &thicknessSlider_};
+            juce::Label* row1Labels[row1Count] = {&modeLabel_, &dirtLabel_, &thicknessLabel_};
+            for (int i = 0; i < row1Count; ++i) {
                 const int columnX = rightX + i * colWidth;
                 const int knobX = columnX + (colWidth - smallKnobSize) / 2;
                 row1Labels[i]->setBounds(columnX, knobAreaTop, colWidth, knobLabelHeight);
@@ -971,12 +996,10 @@ private:
             const int row1Bottom = knobAreaTop + knobLabelHeight + 2 + smallKnobSize + knobTextBoxHeight;
             const int row2Y = row1Bottom + rowGap;
 
-            // Only 1 control this row — shares row 1's column width and
-            // sits in column 0 rather than being re-centered, so it stays
-            // grid-aligned with row 1 above it.
-            constexpr int row2Count = 1;
-            juce::Slider* row2Knobs[row2Count] = {&dissonanceSlider_};
-            juce::Label* row2Labels[row2Count] = {&dissonanceLabel_};
+            juce::Slider* row2Knobs[row2Count] = {&grooveSlider_, &busySlider_, &sustainSlider_,
+                                                  &dissonanceSlider_};
+            juce::Label* row2Labels[row2Count] = {&grooveLabel_, &busyLabel_, &sustainLabel_,
+                                                  &dissonanceLabel_};
             for (int i = 0; i < row2Count; ++i) {
                 const int columnX = rightX + i * colWidth;
                 const int knobX = columnX + (colWidth - smallKnobSize) / 2;
@@ -1019,18 +1042,30 @@ private:
                     evolutionEngineRef_.resyncPitchRange(voiceRef_.getPitchRangeLow(),
                                                           voiceRef_.getPitchRangeHigh());
                 }
-            } else if (button == &timbreEvoToggle_) {
-                const bool on = timbreEvoToggle_.getToggleState();
+            } else if (button == &modeEvoToggle_) {
+                const bool on = modeEvoToggle_.getToggleState();
                 evolutionEngineRef_.setTimbreEnabled(on);
                 if (on) evolutionEngineRef_.resyncTimbre(voiceRef_.getTimbre());
-            } else if (button == &motionEvoToggle_) {
-                const bool on = motionEvoToggle_.getToggleState();
-                evolutionEngineRef_.setGrooveEnabled(on);
-                if (on) evolutionEngineRef_.resyncGroove(voiceRef_.getGroove());
-            } else if (button == &complexityEvoToggle_) {
-                const bool on = complexityEvoToggle_.getToggleState();
+            } else if (button == &dirtEvoToggle_) {
+                const bool on = dirtEvoToggle_.getToggleState();
+                evolutionEngineRef_.setCleanlinessEnabled(on);
+                if (on) evolutionEngineRef_.resyncCleanliness(voiceRef_.getCleanliness());
+            } else if (button == &thicknessEvoToggle_) {
+                const bool on = thicknessEvoToggle_.getToggleState();
                 evolutionEngineRef_.setWanderEnabled(on);
                 if (on) evolutionEngineRef_.resyncWander(voiceRef_.getWander());
+            } else if (button == &grooveEvoToggle_) {
+                const bool on = grooveEvoToggle_.getToggleState();
+                evolutionEngineRef_.setGrooveEnabled(on);
+                if (on) evolutionEngineRef_.resyncGroove(voiceRef_.getGroove());
+            } else if (button == &busyEvoToggle_) {
+                const bool on = busyEvoToggle_.getToggleState();
+                evolutionEngineRef_.setBusyEnabled(on);
+                if (on) evolutionEngineRef_.resyncBusy(voiceRef_.getBusy());
+            } else if (button == &sustainEvoToggle_) {
+                const bool on = sustainEvoToggle_.getToggleState();
+                evolutionEngineRef_.setSustainEnabled(on);
+                if (on) evolutionEngineRef_.resyncSustain(voiceRef_.getSustain());
             } else if (button == &dissonanceEvoToggle_) {
                 const bool on = dissonanceEvoToggle_.getToggleState();
                 evolutionEngineRef_.setDissonanceEnabled(on);
@@ -1042,27 +1077,35 @@ private:
             if (handleBaseSliderChanged(slider)) {
                 return;
             }
-            // Every manual edit resyncs EvolutionEngine's internal state to
-            // match, regardless of that parameter's toggle state — without
-            // this, an Evolution-enabled parameter keeps writing its own
-            // stale internal value back over your drag within ~1.5ms
-            // (every 64 samples).
             if (slider == &volumeSlider_) {
                 const float value = static_cast<float>(volumeSlider_.getValue());
                 voiceRef_.setVolume(value);
                 evolutionEngineRef_.resyncVolume(value);
-            } else if (slider == &timbreSlider_) {
-                const float value = static_cast<float>(timbreSlider_.getValue());
+            } else if (slider == &modeSlider_) {
+                const float value = static_cast<float>(modeSlider_.getValue());
                 voiceRef_.setTimbre(value);
                 evolutionEngineRef_.resyncTimbre(value);
-            } else if (slider == &motionSlider_) {
-                const float value = static_cast<float>(motionSlider_.getValue());
-                voiceRef_.setGroove(value);
-                evolutionEngineRef_.resyncGroove(value);
-            } else if (slider == &complexitySlider_) {
-                const float value = static_cast<float>(complexitySlider_.getValue());
+            } else if (slider == &dirtSlider_) {
+                const float displayed = static_cast<float>(dirtSlider_.getValue());
+                const float stored = 1.0f - displayed;
+                voiceRef_.setCleanliness(stored);
+                evolutionEngineRef_.resyncCleanliness(stored);
+            } else if (slider == &thicknessSlider_) {
+                const float value = static_cast<float>(thicknessSlider_.getValue());
                 voiceRef_.setWander(value);
                 evolutionEngineRef_.resyncWander(value);
+            } else if (slider == &grooveSlider_) {
+                const float value = static_cast<float>(grooveSlider_.getValue());
+                voiceRef_.setGroove(value);
+                evolutionEngineRef_.resyncGroove(value);
+            } else if (slider == &busySlider_) {
+                const float value = static_cast<float>(busySlider_.getValue());
+                voiceRef_.setBusy(value);
+                evolutionEngineRef_.resyncBusy(value);
+            } else if (slider == &sustainSlider_) {
+                const float value = static_cast<float>(sustainSlider_.getValue());
+                voiceRef_.setSustain(value);
+                evolutionEngineRef_.resyncSustain(value);
             } else if (slider == &dissonanceSlider_) {
                 const float value = static_cast<float>(dissonanceSlider_.getValue());
                 voiceRef_.setDissonance(value);
@@ -1074,33 +1117,34 @@ private:
             }
         }
 
-        // Reflects the current model state into the controls, without
-        // triggering listener callbacks (used after Stop/Reset and by the
-        // Evolution auto-refresh timer). Skips any control the user is
-        // currently dragging, so autonomous evolution doesn't fight a live
-        // gesture. Does not touch the Evolution toggle states — those are
-        // independent user preference, only reset via resetEvolutionToggles().
         void refreshFromModel() override {
             VoiceRowBase::refreshFromModel();
             if (!volumeSlider_.isMouseButtonDown()) {
                 volumeSlider_.setValue(voiceRef_.getVolume(), juce::dontSendNotification);
             }
-            if (!timbreSlider_.isMouseButtonDown()) {
-                timbreSlider_.setValue(voiceRef_.getTimbre(), juce::dontSendNotification);
+            if (!modeSlider_.isMouseButtonDown()) {
+                modeSlider_.setValue(voiceRef_.getTimbre(), juce::dontSendNotification);
             }
-            if (!motionSlider_.isMouseButtonDown()) {
-                motionSlider_.setValue(voiceRef_.getGroove(), juce::dontSendNotification);
+            if (!dirtSlider_.isMouseButtonDown()) {
+                dirtSlider_.setValue(1.0f - voiceRef_.getCleanliness(), juce::dontSendNotification);
             }
-            if (!complexitySlider_.isMouseButtonDown()) {
-                complexitySlider_.setValue(voiceRef_.getWander(), juce::dontSendNotification);
+            if (!thicknessSlider_.isMouseButtonDown()) {
+                thicknessSlider_.setValue(voiceRef_.getWander(), juce::dontSendNotification);
+            }
+            if (!grooveSlider_.isMouseButtonDown()) {
+                grooveSlider_.setValue(voiceRef_.getGroove(), juce::dontSendNotification);
+            }
+            if (!busySlider_.isMouseButtonDown()) {
+                busySlider_.setValue(voiceRef_.getBusy(), juce::dontSendNotification);
+            }
+            if (!sustainSlider_.isMouseButtonDown()) {
+                sustainSlider_.setValue(voiceRef_.getSustain(), juce::dontSendNotification);
             }
             if (!dissonanceSlider_.isMouseButtonDown()) {
                 dissonanceSlider_.setValue(voiceRef_.getDissonance(), juce::dontSendNotification);
             }
         }
 
-        // Restores all 6 Evolution toggles to their default (on) state —
-        // part of a full Stop/Reset, not the ordinary model-sync above.
         void resetEvolutionToggles() override {
             for (auto* toggle : evolutionToggles()) {
                 toggle->setToggleState(true, juce::dontSendNotification);
@@ -1108,72 +1152,92 @@ private:
             evolutionEngineRef_.setVolumeEnabled(true);
             evolutionEngineRef_.setPitchRangeEnabled(true);
             evolutionEngineRef_.setTimbreEnabled(true);
-            evolutionEngineRef_.setGrooveEnabled(true);
+            evolutionEngineRef_.setCleanlinessEnabled(true);
             evolutionEngineRef_.setWanderEnabled(true);
+            evolutionEngineRef_.setGrooveEnabled(true);
+            evolutionEngineRef_.setBusyEnabled(true);
+            evolutionEngineRef_.setSustainEnabled(true);
             evolutionEngineRef_.setDissonanceEnabled(true);
         }
 
-        // Reflects EvolutionEngine's current opt-in/out flags into the six
-        // toggle LEDs, without touching the values they control — needed
-        // since MIDI Learn can flip these flags from off-screen.
         void refreshEvolutionToggles() override {
             volumeEvoToggle_.setToggleState(evolutionEngineRef_.isVolumeEnabled(),
                                             juce::dontSendNotification);
             pitchRangeEvoToggle_.setToggleState(evolutionEngineRef_.isPitchRangeEnabled(),
                                                 juce::dontSendNotification);
-            timbreEvoToggle_.setToggleState(evolutionEngineRef_.isTimbreEnabled(),
+            modeEvoToggle_.setToggleState(evolutionEngineRef_.isTimbreEnabled(),
+                                          juce::dontSendNotification);
+            dirtEvoToggle_.setToggleState(evolutionEngineRef_.isCleanlinessEnabled(),
+                                          juce::dontSendNotification);
+            thicknessEvoToggle_.setToggleState(evolutionEngineRef_.isWanderEnabled(),
+                                               juce::dontSendNotification);
+            grooveEvoToggle_.setToggleState(evolutionEngineRef_.isGrooveEnabled(),
                                             juce::dontSendNotification);
-            motionEvoToggle_.setToggleState(evolutionEngineRef_.isGrooveEnabled(),
-                                            juce::dontSendNotification);
-            complexityEvoToggle_.setToggleState(evolutionEngineRef_.isWanderEnabled(),
-                                                juce::dontSendNotification);
+            busyEvoToggle_.setToggleState(evolutionEngineRef_.isBusyEnabled(),
+                                          juce::dontSendNotification);
+            sustainEvoToggle_.setToggleState(evolutionEngineRef_.isSustainEnabled(),
+                                             juce::dontSendNotification);
             dissonanceEvoToggle_.setToggleState(evolutionEngineRef_.isDissonanceEnabled(),
                                                 juce::dontSendNotification);
         }
 
     private:
-        static constexpr int kEvolutionToggleCount = 6;
+        static constexpr int kEvolutionToggleCount = 9;
         static constexpr const char* kEvolutionCaptions[kEvolutionToggleCount] = {
-            "Volume", "Range", "Timbre", "Motion", "Complexity", "Dissonance"};
+            "Volume", "Range", "Mode", "Dirt", "Thickness", "Groove", "Busy", "Sustain", "Dissonance"};
 
         std::array<juce::Label*, kEvolutionToggleCount> evolutionCaptionLabels() {
-            return {&volumeEvoLabel_, &pitchRangeEvoLabel_, &timbreEvoLabel_, &motionEvoLabel_,
-                    &complexityEvoLabel_, &dissonanceEvoLabel_};
+            return {&volumeEvoLabel_,  &pitchRangeEvoLabel_, &modeEvoLabel_,    &dirtEvoLabel_,
+                    &thicknessEvoLabel_, &grooveEvoLabel_,   &busyEvoLabel_,    &sustainEvoLabel_,
+                    &dissonanceEvoLabel_};
         }
 
         std::array<juce::ToggleButton*, kEvolutionToggleCount> evolutionToggles() {
-            return {&volumeEvoToggle_,     &pitchRangeEvoToggle_, &timbreEvoToggle_,
-                    &motionEvoToggle_,     &complexityEvoToggle_, &dissonanceEvoToggle_};
+            return {&volumeEvoToggle_,    &pitchRangeEvoToggle_, &modeEvoToggle_,     &dirtEvoToggle_,
+                    &thicknessEvoToggle_, &grooveEvoToggle_,     &busyEvoToggle_,     &sustainEvoToggle_,
+                    &dissonanceEvoToggle_};
         }
 
         juce::Label volumeLabel_;
-        juce::Label timbreLabel_;
-        juce::Label motionLabel_;
-        juce::Label complexityLabel_;
+        juce::Label modeLabel_;
+        juce::Label dirtLabel_;
+        juce::Label thicknessLabel_;
+        juce::Label grooveLabel_;
+        juce::Label busyLabel_;
+        juce::Label sustainLabel_;
         juce::Label dissonanceLabel_;
         juce::Slider volumeSlider_;
-        juce::Slider timbreSlider_;
-        juce::Slider motionSlider_;
-        juce::Slider complexitySlider_;
+        juce::Slider modeSlider_;
+        juce::Slider dirtSlider_;
+        juce::Slider thicknessSlider_;
+        juce::Slider grooveSlider_;
+        juce::Slider busySlider_;
+        juce::Slider sustainSlider_;
         juce::Slider dissonanceSlider_;
         juce::Label evolutionSectionLabel_;
         juce::Label volumeEvoLabel_;
         juce::Label pitchRangeEvoLabel_;
-        juce::Label timbreEvoLabel_;
-        juce::Label motionEvoLabel_;
-        juce::Label complexityEvoLabel_;
+        juce::Label modeEvoLabel_;
+        juce::Label dirtEvoLabel_;
+        juce::Label thicknessEvoLabel_;
+        juce::Label grooveEvoLabel_;
+        juce::Label busyEvoLabel_;
+        juce::Label sustainEvoLabel_;
         juce::Label dissonanceEvoLabel_;
         juce::ToggleButton volumeEvoToggle_;
         juce::ToggleButton pitchRangeEvoToggle_;
-        juce::ToggleButton timbreEvoToggle_;
-        juce::ToggleButton motionEvoToggle_;
-        juce::ToggleButton complexityEvoToggle_;
+        juce::ToggleButton modeEvoToggle_;
+        juce::ToggleButton dirtEvoToggle_;
+        juce::ToggleButton thicknessEvoToggle_;
+        juce::ToggleButton grooveEvoToggle_;
+        juce::ToggleButton busyEvoToggle_;
+        juce::ToggleButton sustainEvoToggle_;
         juce::ToggleButton dissonanceEvoToggle_;
     };
 
-    // Haze's bespoke card: same 5-knob-row + 6-toggle shape as
-    // GenericVoiceRow (still used by Spark) — only the labels and the
-    // underlying DSP meaning differ. Texture (relabels Timbre — same
+    // Haze's bespoke card: same Volume-alone-left + shared-column-width
+    // grid template every voice card uses — see AmbientVoiceRow::resized()
+    // for the reference shape. Texture (relabels Timbre — same
     // `timbre_` field, new DSP: an explicit tonal Glow<->Edge morph via
     // Grain::triggerHaze, replacing the random pickWaveform lottery that
     // made Timbre unpredictable and could accidentally collapse into a
@@ -1516,8 +1580,8 @@ private:
         // are a smaller grid to its right (row 1: 3 tone-shaping controls,
         // row 2: 4 rhythmic/note-shape controls). Sized adaptively from
         // whatever height the shared 2x2 voice grid gives this card
-        // (computed, not hardcoded), so Bass's extra row doesn't force
-        // the window taller than GenericVoiceRow's single-row cards need.
+        // (computed, not hardcoded), so every card fits the same shared
+        // grid cell height regardless of its own row count.
         void resized() override {
             constexpr int padding = 14;
             const int contentWidth = getWidth() - padding * 2;
@@ -1528,9 +1592,8 @@ private:
             constexpr int rowGap = 8;
             constexpr int toggleCaptionHeight = 12;
             constexpr int toggleSize = 16;
-            // Mirrors GenericVoiceRow's divider(10) + evo-label(16) +
-            // toggle-row(18 + caption + gap + toggle) shape below the knob
-            // area, so both card types need the same total footer height.
+            // Same divider(10) + evo-label(16) + toggle-row(18 + caption +
+            // gap + toggle) footer shape every card uses.
             constexpr int footerHeight = 10 + 16 + 18 + toggleCaptionHeight + 2 + toggleSize;
 
             const int knobAreaHeight =
@@ -1794,10 +1857,10 @@ private:
     // shape as BassVoiceRow — row 1 (3) Material/Dissonance/Speed, row 2
     // (2, sharing the same column width so both rows stay aligned)
     // Complexity/Cleanliness — plus a matching 7-toggle Evolution row.
-    // Material/Speed/Complexity are the exact same underlying VoiceModel
-    // fields GenericVoiceRow calls Timbre/Motion/Complexity — only the
-    // label and (for Material) the grain-trigger DSP differ; see
-    // Grain::triggerAmbient/GrainCloud::renderAmbientSample.
+    // Material/Speed/Complexity are the same underlying VoiceModel fields
+    // (timbre_/groove_/wander_) every voice reuses for its own bespoke
+    // meaning — only the label and (for Material) the grain-trigger DSP
+    // differ; see Grain::triggerAmbient/GrainCloud::renderAmbientSample.
     class AmbientVoiceRow : public VoiceRowBase {
     public:
         AmbientVoiceRow(VoiceModel& voice, EvolutionEngine& evolutionEngine,
@@ -2541,29 +2604,29 @@ private:
             switch (target) {
                 case MidiTarget::VoicePitchCenter: return "Pitch Range";
                 case MidiTarget::VoiceVolume: return "Volume";
-                case MidiTarget::VoiceTimbre: return "Timbre / Dirt / Material / Texture";
+                case MidiTarget::VoiceTimbre: return "Timbre / Dirt / Material / Texture / Mode";
                 case MidiTarget::VoiceMotion: return "Motion / Groove / Speed / Drift";
-                case MidiTarget::VoiceComplexity: return "Complexity / Wander / Layers";
+                case MidiTarget::VoiceComplexity: return "Complexity / Wander / Layers / Thickness";
                 case MidiTarget::VoiceDissonance: return "Dissonance";
-                case MidiTarget::VoiceBusy: return "Busy (Bass)";
-                case MidiTarget::VoiceSustain: return "Sustain (Bass)";
+                case MidiTarget::VoiceBusy: return "Busy (Bass / Spark)";
+                case MidiTarget::VoiceSustain: return "Sustain (Bass / Spark)";
                 case MidiTarget::VoiceAttack: return "Attack (Bass) / Fuzz (Haze)";
                 // Raw CC value maps directly to cleanliness_ (0=dirty..
                 // 1=clean) here, same as the Scene field — the inverted
                 // "Dirt" display/drag direction is a per-voice-card UI
                 // convenience only, not part of the MIDI/Scene contract.
-                case MidiTarget::VoiceCleanliness: return "Dirt (Ambient, inverted)";
+                case MidiTarget::VoiceCleanliness: return "Dirt (Ambient / Spark, inverted)";
                 case MidiTarget::VoiceEnabledToggle: return "Enabled toggle";
                 case MidiTarget::VoicePitchRangeEvoToggle: return "Evolve: Pitch Range";
                 case MidiTarget::VoiceVolumeEvoToggle: return "Evolve: Volume";
-                case MidiTarget::VoiceTimbreEvoToggle: return "Evolve: Timbre / Dirt / Material / Texture";
+                case MidiTarget::VoiceTimbreEvoToggle: return "Evolve: Timbre / Dirt / Material / Texture / Mode";
                 case MidiTarget::VoiceMotionEvoToggle: return "Evolve: Motion / Groove / Speed / Drift";
-                case MidiTarget::VoiceComplexityEvoToggle: return "Evolve: Complexity / Wander / Layers";
+                case MidiTarget::VoiceComplexityEvoToggle: return "Evolve: Complexity / Wander / Layers / Thickness";
                 case MidiTarget::VoiceDissonanceEvoToggle: return "Evolve: Dissonance";
-                case MidiTarget::VoiceBusyEvoToggle: return "Evolve: Busy (Bass)";
-                case MidiTarget::VoiceSustainEvoToggle: return "Evolve: Sustain (Bass)";
+                case MidiTarget::VoiceBusyEvoToggle: return "Evolve: Busy (Bass / Spark)";
+                case MidiTarget::VoiceSustainEvoToggle: return "Evolve: Sustain (Bass / Spark)";
                 case MidiTarget::VoiceAttackEvoToggle: return "Evolve: Attack (Bass) / Fuzz (Haze)";
-                case MidiTarget::VoiceCleanlinessEvoToggle: return "Evolve: Dirt (Ambient)";
+                case MidiTarget::VoiceCleanlinessEvoToggle: return "Evolve: Dirt (Ambient / Spark)";
                 case MidiTarget::SelectVoice1: return "Voice 1";
                 case MidiTarget::SelectVoice2: return "Voice 2";
                 case MidiTarget::SelectVoice3: return "Voice 3";

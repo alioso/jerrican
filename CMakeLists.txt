@@ -105,6 +105,15 @@ target_include_directories(HarmonicScaleTests
         ${CMAKE_CURRENT_SOURCE_DIR}/Sources/JerricanApp
 )
 
+add_executable(ChordScaleTests
+    Tests/ChordScaleTest.cpp
+)
+
+target_include_directories(ChordScaleTests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Sources/JerricanApp
+)
+
 add_executable(MidiBindingManagerTests
     Tests/MidiBindingManagerTest.cpp
 )
