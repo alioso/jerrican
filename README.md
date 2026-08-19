@@ -16,15 +16,29 @@ never plays the same way twice.
   short-lived, enveloped, randomized micro-grains (synthesized, not sampled)
   rather than one continuous oscillator. Overlapping grains are what give
   the texture its granular character.
-- **Macros, not direct values**: each voice exposes five generative
-  controls — **Pitch Range**, **Timbre**, **Motion**, **Complexity**,
-  **Dissonance** — plus direct **Enabled**/**Volume** and a **Key** (root
-  note, not affected by Evolution/Randomize). These set the field a
-  voice's grains are drawn from; the actual pitch/waveform/timing of any
-  given grain is decided by the engine at the moment it's spawned.
-  Dissonance blends between quantizing to that voice's rooted scale
-  (harmonizes with other voices at low Dissonance, especially when their
-  Keys are set a deliberate interval apart) and fully free/chromatic.
+- **Macros, not direct values**: every voice shares four universal, direct
+  controls — **Enabled**, **Solo**, **Volume**, **Pitch Range**,
+  **Dissonance**, and a **Key** (root note, not affected by Evolution/
+  Randomize) — plus its own bespoke set of generative macros, one voice
+  per instrument character (see below). These set the field a voice's
+  grains are drawn from; the actual pitch/waveform/timing of any given
+  grain is decided by the engine at the moment it's spawned. Dissonance
+  blends between
+  quantizing to that voice's rooted scale (harmonizes with other voices at
+  low Dissonance, especially when their Keys are set a deliberate interval
+  apart) and fully free/chromatic.
+- **Four bespoke voices, one shared engine**: **Bass** is a metered
+  walking bassline (Dirt, Attack, Groove, Busy, Wander, Sustain) locked to
+  the Tempo/Meter clock. **Ambient** is a slow-evolving generative pad in
+  the spirit of Brian Eno's tape-loop ambient works (Material, Speed,
+  Layers, Dirt). **Haze** is a synthetic textured layer with a dedicated
+  saturation stage built from several detuned voices clipped together, not
+  just one oscillator driven harder (Texture, Fuzz, Drift, Layers). **Keys**
+  is a chord-comping keyboard voice — a continuous Piano↔Organ↔Wurlitzer
+  timbral morph, playing real chords built from the same shared pentatonic
+  scale every other voice quantizes to (so it's always in key with the
+  rest of the mix), on a metered pattern like Bass's (Mode, Dirt,
+  Thickness, Voicing, Groove, Busy, Sustain).
 - **Autonomous drift**: a global **Evolution Amount/Speed** pair drives
   every voice's macros to independently wander — occasionally picking a
   new random target and gliding toward it — while playing; each macro has
@@ -45,12 +59,20 @@ never plays the same way twice.
 - A native JUCE app shell for macOS with a working CMake build pipeline,
   shipping as Standalone, AU, and VST3
 - A granular synthesis engine: `VoiceOscillator` (Sine/Saw/FM/Noise
-  generators) → `Grain` (one enveloped, panned micro-burst) → `GrainCloud`
-  (per-voice grain pool, spawn scheduling, and autonomous drift/breathing),
-  with `HarmonicScale` quantizing pitch to each voice's rooted scale as
-  Dissonance approaches 0
-- A lock-free `VoiceModel` per voice (atomic enabled/volume/pitch-range/
-  timbre/motion/complexity/dissonance/root, safe to read from the
+  generators) → `Grain` (one enveloped, panned micro-burst, with a bespoke
+  `trigger*` method per voice — `triggerBlended`/`triggerAmbient`/
+  `triggerHaze`/`triggerKeys`) → `GrainCloud` (per-voice grain pool and
+  spawn scheduling), with `HarmonicScale` quantizing pitch to each voice's
+  rooted scale as Dissonance approaches 0. Bass and Keys spawn on a
+  metered pattern (`BassGroovePattern`/`KeysChordPattern`, sharing the
+  same `PatternClock`/`MeterTable` grid) instead of continuous stochastic
+  scattering; Keys' chords are built directly from pentatonic scale steps
+  (`ChordScale.h`) so they're guaranteed to land on the same notes
+  `HarmonicScale` quantizes every other voice to
+- A lock-free `VoiceModel` per voice (atomic enabled/soloed/volume/pitch-
+  range/dissonance/root plus each voice's own bespoke macros — the same
+  underlying fields are reused for different bespoke meanings per voice
+  rather than growing the schema per voice, safe to read from the
   real-time audio thread) and an `EvolutionEngine` per voice for
   autonomous per-macro drift
 - Effects chain: Reverb (Room/Decay), Master Volume
@@ -66,7 +88,7 @@ never plays the same way twice.
   Recordings`, via a background-threaded writer (`AudioRecorder.h`) so
   the realtime audio callback never blocks on file I/O; "Open Folder"
   reveals the last recording in Finder
-- Headless regression tests for every JUCE-free engine class (8 test
+- Headless regression tests for every JUCE-free engine class (9 test
   binaries — the engine has zero JUCE dependency, so these link and run
   with no app bundle/audio device needed)
 
@@ -82,6 +104,9 @@ never plays the same way twice.
 - [Sources/JerricanApp/Grain.h](Sources/JerricanApp/Grain.h) — a single enveloped, panned grain
 - [Sources/JerricanApp/GrainCloud.h](Sources/JerricanApp/GrainCloud.h) — per-voice grain pool, scheduler, and drift
 - [Sources/JerricanApp/HarmonicScale.h](Sources/JerricanApp/HarmonicScale.h) — rooted-scale pitch quantization for Dissonance
+- [Sources/JerricanApp/ChordScale.h](Sources/JerricanApp/ChordScale.h) — pentatonic-native chord tables for Keys, built to stay on `HarmonicScale`'s exact scale
+- [Sources/JerricanApp/BassGroovePattern.h](Sources/JerricanApp/BassGroovePattern.h) / [KeysChordPattern.h](Sources/JerricanApp/KeysChordPattern.h) — the metered rhythm/chord-degree engines behind Bass and Keys
+- [Sources/JerricanApp/PatternClock.h](Sources/JerricanApp/PatternClock.h) / [MeterTable.h](Sources/JerricanApp/MeterTable.h) — the shared Tempo/Meter grid Bass and Keys are locked to
 - [Sources/JerricanApp/EvolutionEngine.h](Sources/JerricanApp/EvolutionEngine.h) — per-voice autonomous macro drift
 - [Sources/JerricanApp/MidiBindingManager.h](Sources/JerricanApp/MidiBindingManager.h) / [MidiPresetStore.h](Sources/JerricanApp/MidiPresetStore.h) — MIDI Learn and its named presets
 - [Sources/JerricanApp/SceneState.h](Sources/JerricanApp/SceneState.h) / [ScenePresetStore.h](Sources/JerricanApp/ScenePresetStore.h) — full-state Scene snapshots

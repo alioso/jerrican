@@ -527,9 +527,9 @@ public:
                     // Haze: Drift scales grain duration (GrainCloud::
                     // maybeSpawnHazeGrain), Layers (Complexity relabeled)
                     // drives grain density, Texture drives Grain::
-                    // triggerHaze's tone instead of the random
-                    // pickWaveform lottery Keys still uses. `active`
-                    // gates new-grain spawning, same reasoning as Ambient.
+                    // triggerHaze's tone via an explicit Glow<->Edge morph.
+                    // `active` gates new-grain spawning, same reasoning as
+                    // Ambient.
                     // getAttack() reused as Haze's Fuzz amount — same
                     // generic-slot-reuse pattern as Ambient's Cleanliness;
                     // Bass-only meaning nowhere required, VoiceModel/

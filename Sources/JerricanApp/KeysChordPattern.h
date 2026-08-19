@@ -21,8 +21,6 @@ class KeysChordPattern {
 public:
     struct Trigger {
         int degree = 0;
-        float pitchJitterSemitones = 0.0f;
-        float velocity = 1.0f;
     };
 
     KeysChordPattern(std::uint32_t seed, const MeterTable::AccentProfile* accentProfile,
@@ -53,8 +51,6 @@ public:
                     maxDelaySamples > 0
                         ? static_cast<int>(random_.nextFloat01() * static_cast<float>(maxDelaySamples))
                         : 0;
-                pendingVelocity_ = 1.0f - random_.nextFloat01() * groove * 0.5f;
-                pendingPitchJitterSemitones_ = (random_.nextFloat01() * 2.0f - 1.0f) * groove * 2.0f;
                 pendingDegree_ = currentDegree_;
                 hasPendingTrigger_ = true;
             }
@@ -63,7 +59,7 @@ public:
         if (hasPendingTrigger_) {
             if (pendingDelaySamples_ <= 0) {
                 hasPendingTrigger_ = false;
-                return Trigger{pendingDegree_, pendingPitchJitterSemitones_, pendingVelocity_};
+                return Trigger{pendingDegree_};
             }
             --pendingDelaySamples_;
         }
@@ -155,8 +151,6 @@ private:
     float lastGroove_ = 0.0f;
     bool hasPendingTrigger_ = false;
     int pendingDelaySamples_ = 0;
-    float pendingVelocity_ = 1.0f;
-    float pendingPitchJitterSemitones_ = 0.0f;
     int pendingDegree_ = 0;
     int currentDegree_ = 0;
 };

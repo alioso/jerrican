@@ -69,16 +69,16 @@ public:
             1.0f - std::exp(-1.0f / (kCorrelatedReleaseSeconds * static_cast<float>(sampleRate)));
     }
 
-    // Immediately jumps the drift/breathing targets to new random values —
-    // used by the Randomize button as a generative nudge rather than a
-    // hard parameter snap. Scoped to the voice's current pitch range, same
-    // as the autonomous drift in updateDrift() — otherwise the new target
+    // Immediately jumps the drift target to a new random value — used by
+    // the Randomize button as a generative nudge rather than a hard
+    // parameter snap. Scoped to the voice's current pitch range, same as
+    // the autonomous drift in updateDrift() — otherwise the new target
     // just gets clamped straight back to the range edge it's already at.
-    // Only meaningful for the Drone/Keys/Haze (renderSample) path — Bass
-    // doesn't use driftCenter_/breathingGain_ at all.
+    // Only meaningful for Ambient/Haze (the updateDrift()-driven paths,
+    // via driftCenter_) — Bass/Keys never call updateDrift() at all, so
+    // this is a harmless no-op for them.
     void rerollDrift(float pitchRangeLow, float pitchRangeHigh) {
         driftTarget_ = random_.nextFloatRange(pitchRangeLow, pitchRangeHigh);
-        breathingTarget_ = random_.nextFloatRange(0.3f, 1.0f);
     }
 
     // Ambient-only. updateDrift() (pitch-drift retarget rate) still runs
@@ -299,33 +299,6 @@ public:
         }
     }
 
-    // Sums every currently-active grain into this sample's stereo output —
-    // called every sample by both renderSample() (after its own spawn
-    // decision) and, for Bass, directly by JerricanAudioProcessor once per
-    // sample regardless of whether spawnGrainNow() fired this sample.
-    Grain::StereoSample renderActiveGrains(float volume) {
-        float left = 0.0f;
-        float right = 0.0f;
-        int activeCount = 0;
-        for (auto& grain : grains_) {
-            if (grain.isActive()) {
-                const auto sample = grain.renderSample();
-                left += sample.left;
-                right += sample.right;
-                ++activeCount;
-            }
-        }
-
-        // Overlapping grains are uncorrelated, so normalize by sqrt(N) to
-        // keep perceived loudness roughly stable as density changes, then
-        // hard-clamp as a safety net against the (rare) case of many grains
-        // peaking in the same sample.
-        const float normalization = activeCount > 0 ? 1.0f / std::sqrt(static_cast<float>(activeCount)) : 1.0f;
-        const float gain = volume * breathingGain_ * normalization;
-        return {std::max(-1.0f, std::min(1.0f, left * gain)),
-                std::max(-1.0f, std::min(1.0f, right * gain))};
-    }
-
     // Correlated-aware equivalent of renderActiveGrains, used by both Bass
     // and Ambient in place of it. Grains that sum close to linearly
     // (rather than the sqrt(N) the shared method assumes for decorrelated
@@ -353,16 +326,12 @@ public:
     // start/stop — snapping the gain every time produced its own audible
     // stepping/pumping artifact (an earlier version of this fix baked a
     // fixed compensation into each grain at trigger time instead, which
-    // fought renderActiveGrains' own per-sample renormalization the same
-    // way). Moderate attack/slower release (see kCorrelatedAttackSeconds/
+    // fought this method's own per-sample renormalization the same way).
+    // Moderate attack/slower release (see kCorrelatedAttackSeconds/
     // kCorrelatedReleaseSeconds) — reacts to sustained density trends
     // rather than ducking on every individual note onset, which produced
     // an audible "wave" pump under long sustained notes when the pattern
-    // fired new grains while an old one was still ringing. No
-    // breathingGain_ term — that's driftCenter_/breathingGain_'s
-    // renderSample-only drift mechanic, which spawnGrainNow/
-    // maybeSpawnAmbientGrain never touches, so it would always be a
-    // no-op 1.0 here anyway.
+    // fired new grains while an old one was still ringing.
     Grain::StereoSample renderActiveGrainsCorrelated(float volume, float wander,
                                                        float boost = 1.0f) {
         float left = 0.0f;
@@ -397,11 +366,9 @@ private:
             (driftPickRateMinHz + motion * driftPickRateSpanHz) / static_cast<float>(sampleRate_);
         if (random_.nextFloat01() < pickProbabilityPerSample) {
             driftTarget_ = random_.nextFloatRange(low, high);
-            breathingTarget_ = random_.nextFloatRange(1.0f - motion * 0.7f, 1.0f);
         }
 
         driftCenter_ += (driftTarget_ - driftCenter_) * smoothingCoefficient;
-        breathingGain_ += (breathingTarget_ - breathingGain_) * smoothingCoefficient;
     }
 
     // Ambient-only equivalent of the old stochastic single-note spawn path
@@ -542,8 +509,6 @@ private:
     Grain::Character character_;
     float driftCenter_ = 0.5f;
     float driftTarget_ = 0.5f;
-    float breathingGain_ = 1.0f;
-    float breathingTarget_ = 1.0f;
     float correlatedNormalization_ = 1.0f;
     float correlatedAttackCoefficient_ = 1.0f;
     float correlatedReleaseCoefficient_ = 1.0f;
