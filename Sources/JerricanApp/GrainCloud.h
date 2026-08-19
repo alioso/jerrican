@@ -123,12 +123,12 @@ public:
     // Layers' density floor, for the same stop/start reason.
     Grain::StereoSample renderHazeSample(float pitchRangeLow, float pitchRangeHigh, float texture,
                                           float drift, float complexity, float volume,
-                                          float dissonance, bool active,
+                                          float dissonance, float fuzz, bool active,
                                           int rootSemitoneOffset = 0) {
         updateDrift(pitchRangeLow, pitchRangeHigh, drift);
         if (active) {
             maybeSpawnHazeGrain(pitchRangeLow, pitchRangeHigh, texture, drift, complexity,
-                                dissonance, rootSemitoneOffset);
+                                dissonance, fuzz, rootSemitoneOffset);
         }
         // renderActiveGrainsCorrelated with wander pinned to 1.0 — NOT
         // Ambient/Bass's stronger correlation exponents. Pinning wander=1
@@ -397,7 +397,7 @@ private:
     // duration as the dominant audible effect (kHazeSlowDurationMultiple
     // stretches Drift=0 out relative to the configured/Drift=1 range).
     void maybeSpawnHazeGrain(float low, float high, float texture, float drift, float complexity,
-                             float dissonance, int rootSemitoneOffset) {
+                             float dissonance, float fuzz, int rootSemitoneOffset) {
         const float clampedComplexity = std::max(0.0f, std::min(1.0f, complexity));
         const float grainsPerSecond =
             kMinHazeGrainsPerSecond +
@@ -426,7 +426,7 @@ private:
                 random_.nextFloatRange(minGrainDurationMs_, maxGrainDurationMs_) * durationScale;
             const float pan = random_.nextFloat01();
 
-            grain.triggerHaze(sampleRate_, pitch, durationMs, pan, texture);
+            grain.triggerHaze(sampleRate_, pitch, durationMs, pan, texture, fuzz);
             return;
         }
     }

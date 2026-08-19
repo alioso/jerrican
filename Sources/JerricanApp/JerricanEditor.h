@@ -122,9 +122,10 @@ public:
             "Ambient's cleaner tones.\n"
             "Texture - a tonal morph, Glow (soft, still a bit synthetic) "
             "to Edge (bright, buzzy); always pitched, never collapses "
-            "into noise. Past about 80% a fuzz stage also kicks in, "
-            "ramping toward a thick, heavily saturated character by 1 - "
-            "the low-to-mid range is untouched by it.\n"
+            "into noise.\n"
+            "Fuzz - a dedicated saturation stage, independent of Texture: "
+            "0 is untouched, 1 ramps to a thick, heavily saturated, tone-"
+            "shaped character.\n"
             "Drift - how long each layer lasts before turning over; low "
             "is slow-moving, high cycles noticeably faster.\n"
             "Layers - how many notes are sounding at once, sparse to "
@@ -1136,6 +1137,9 @@ private:
             setUpKnob(textureSlider_, textureLabel_, "Texture");
             textureSlider_.setValue(voiceRef_.getTimbre());
 
+            setUpKnob(fuzzSlider_, fuzzLabel_, "Fuzz");
+            fuzzSlider_.setValue(voiceRef_.getAttack());
+
             setUpKnob(driftSlider_, driftLabel_, "Drift");
             driftSlider_.setValue(voiceRef_.getGroove());
 
@@ -1162,16 +1166,16 @@ private:
             const int contentWidth = getWidth() - padding * 2;
             const int knobRowY = layoutHeader(padding, contentWidth);
 
-            constexpr int knobCount = 5;
+            constexpr int knobCount = 6;
             const int knobColumnWidth = contentWidth / knobCount;
             const int knobSize = std::min(84, knobColumnWidth - 12);
             const int knobLabelHeight = 14;
             const int knobTextBoxHeight = 16;
 
-            juce::Slider* knobs[knobCount] = {&volumeSlider_, &textureSlider_, &driftSlider_,
-                                               &layersSlider_, &dissonanceSlider_};
-            juce::Label* knobLabels[knobCount] = {&volumeLabel_, &textureLabel_, &driftLabel_,
-                                                   &layersLabel_, &dissonanceLabel_};
+            juce::Slider* knobs[knobCount] = {&volumeSlider_, &textureSlider_, &fuzzSlider_,
+                                               &driftSlider_, &layersSlider_, &dissonanceSlider_};
+            juce::Label* knobLabels[knobCount] = {&volumeLabel_,   &textureLabel_, &fuzzLabel_,
+                                                   &driftLabel_,   &layersLabel_,  &dissonanceLabel_};
 
             for (int i = 0; i < knobCount; ++i) {
                 const int columnX = padding + i * knobColumnWidth;
@@ -1221,6 +1225,10 @@ private:
                 const bool on = textureEvoToggle_.getToggleState();
                 evolutionEngineRef_.setTimbreEnabled(on);
                 if (on) evolutionEngineRef_.resyncTimbre(voiceRef_.getTimbre());
+            } else if (button == &fuzzEvoToggle_) {
+                const bool on = fuzzEvoToggle_.getToggleState();
+                evolutionEngineRef_.setAttackEnabled(on);
+                if (on) evolutionEngineRef_.resyncAttack(voiceRef_.getAttack());
             } else if (button == &driftEvoToggle_) {
                 const bool on = driftEvoToggle_.getToggleState();
                 evolutionEngineRef_.setGrooveEnabled(on);
@@ -1248,6 +1256,10 @@ private:
                 const float value = static_cast<float>(textureSlider_.getValue());
                 voiceRef_.setTimbre(value);
                 evolutionEngineRef_.resyncTimbre(value);
+            } else if (slider == &fuzzSlider_) {
+                const float value = static_cast<float>(fuzzSlider_.getValue());
+                voiceRef_.setAttack(value);
+                evolutionEngineRef_.resyncAttack(value);
             } else if (slider == &driftSlider_) {
                 const float value = static_cast<float>(driftSlider_.getValue());
                 voiceRef_.setGroove(value);
@@ -1275,6 +1287,9 @@ private:
             if (!textureSlider_.isMouseButtonDown()) {
                 textureSlider_.setValue(voiceRef_.getTimbre(), juce::dontSendNotification);
             }
+            if (!fuzzSlider_.isMouseButtonDown()) {
+                fuzzSlider_.setValue(voiceRef_.getAttack(), juce::dontSendNotification);
+            }
             if (!driftSlider_.isMouseButtonDown()) {
                 driftSlider_.setValue(voiceRef_.getGroove(), juce::dontSendNotification);
             }
@@ -1293,6 +1308,7 @@ private:
             evolutionEngineRef_.setVolumeEnabled(true);
             evolutionEngineRef_.setPitchRangeEnabled(true);
             evolutionEngineRef_.setTimbreEnabled(true);
+            evolutionEngineRef_.setAttackEnabled(true);
             evolutionEngineRef_.setGrooveEnabled(true);
             evolutionEngineRef_.setWanderEnabled(true);
             evolutionEngineRef_.setDissonanceEnabled(true);
@@ -1305,6 +1321,8 @@ private:
                                                 juce::dontSendNotification);
             textureEvoToggle_.setToggleState(evolutionEngineRef_.isTimbreEnabled(),
                                              juce::dontSendNotification);
+            fuzzEvoToggle_.setToggleState(evolutionEngineRef_.isAttackEnabled(),
+                                          juce::dontSendNotification);
             driftEvoToggle_.setToggleState(evolutionEngineRef_.isGrooveEnabled(),
                                            juce::dontSendNotification);
             layersEvoToggle_.setToggleState(evolutionEngineRef_.isWanderEnabled(),
@@ -1314,27 +1332,30 @@ private:
         }
 
     private:
-        static constexpr int kEvolutionToggleCount = 6;
+        static constexpr int kEvolutionToggleCount = 7;
         static constexpr const char* kEvolutionCaptions[kEvolutionToggleCount] = {
-            "Volume", "Range", "Texture", "Drift", "Layers", "Dissonance"};
+            "Volume", "Range", "Texture", "Fuzz", "Drift", "Layers", "Dissonance"};
 
         std::array<juce::Label*, kEvolutionToggleCount> evolutionCaptionLabels() {
-            return {&volumeEvoLabel_, &pitchRangeEvoLabel_, &textureEvoLabel_, &driftEvoLabel_,
-                    &layersEvoLabel_, &dissonanceEvoLabel_};
+            return {&volumeEvoLabel_, &pitchRangeEvoLabel_, &textureEvoLabel_, &fuzzEvoLabel_,
+                    &driftEvoLabel_,  &layersEvoLabel_,     &dissonanceEvoLabel_};
         }
 
         std::array<juce::ToggleButton*, kEvolutionToggleCount> evolutionToggles() {
-            return {&volumeEvoToggle_,     &pitchRangeEvoToggle_, &textureEvoToggle_,
-                    &driftEvoToggle_,      &layersEvoToggle_,     &dissonanceEvoToggle_};
+            return {&volumeEvoToggle_, &pitchRangeEvoToggle_, &textureEvoToggle_,
+                    &fuzzEvoToggle_,   &driftEvoToggle_,      &layersEvoToggle_,
+                    &dissonanceEvoToggle_};
         }
 
         juce::Label volumeLabel_;
         juce::Label textureLabel_;
+        juce::Label fuzzLabel_;
         juce::Label driftLabel_;
         juce::Label layersLabel_;
         juce::Label dissonanceLabel_;
         juce::Slider volumeSlider_;
         juce::Slider textureSlider_;
+        juce::Slider fuzzSlider_;
         juce::Slider driftSlider_;
         juce::Slider layersSlider_;
         juce::Slider dissonanceSlider_;
@@ -1342,12 +1363,14 @@ private:
         juce::Label volumeEvoLabel_;
         juce::Label pitchRangeEvoLabel_;
         juce::Label textureEvoLabel_;
+        juce::Label fuzzEvoLabel_;
         juce::Label driftEvoLabel_;
         juce::Label layersEvoLabel_;
         juce::Label dissonanceEvoLabel_;
         juce::ToggleButton volumeEvoToggle_;
         juce::ToggleButton pitchRangeEvoToggle_;
         juce::ToggleButton textureEvoToggle_;
+        juce::ToggleButton fuzzEvoToggle_;
         juce::ToggleButton driftEvoToggle_;
         juce::ToggleButton layersEvoToggle_;
         juce::ToggleButton dissonanceEvoToggle_;
@@ -2422,7 +2445,7 @@ private:
                 case MidiTarget::VoiceDissonance: return "Dissonance";
                 case MidiTarget::VoiceBusy: return "Busy (Bass)";
                 case MidiTarget::VoiceSustain: return "Sustain (Bass)";
-                case MidiTarget::VoiceAttack: return "Attack (Bass)";
+                case MidiTarget::VoiceAttack: return "Attack (Bass) / Fuzz (Haze)";
                 // Raw CC value maps directly to cleanliness_ (0=dirty..
                 // 1=clean) here, same as the Scene field — the inverted
                 // "Dirt" display/drag direction is a per-voice-card UI
@@ -2437,7 +2460,7 @@ private:
                 case MidiTarget::VoiceDissonanceEvoToggle: return "Evolve: Dissonance";
                 case MidiTarget::VoiceBusyEvoToggle: return "Evolve: Busy (Bass)";
                 case MidiTarget::VoiceSustainEvoToggle: return "Evolve: Sustain (Bass)";
-                case MidiTarget::VoiceAttackEvoToggle: return "Evolve: Attack (Bass)";
+                case MidiTarget::VoiceAttackEvoToggle: return "Evolve: Attack (Bass) / Fuzz (Haze)";
                 case MidiTarget::VoiceCleanlinessEvoToggle: return "Evolve: Dirt (Ambient)";
                 case MidiTarget::SelectVoice1: return "Voice 1";
                 case MidiTarget::SelectVoice2: return "Voice 2";

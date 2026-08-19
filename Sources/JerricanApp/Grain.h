@@ -202,11 +202,15 @@ public:
     // pick near 1 — an accidental white-noise "ocean" wash nobody asked
     // for. Texture never touches Noise at all: it stays a deliberate,
     // fully tonal/pitched morph across Sine/Saw/FM at every setting, so
-    // there's nothing left to accidentally collapse into a wash. Above
-    // kHazeFuzzThreshold, a tanh fuzz stage also kicks in — inert (and
-    // therefore identical to before) below the threshold, ramping up
-    // hard toward a thick, Big-Muff-style saturated character by 1.0.
-    void triggerHaze(double sampleRate, float pitch, float durationMs, float pan, float texture) {
+    // there's nothing left to accidentally collapse into a wash.
+    //
+    // `fuzz` is fully decoupled from `texture` — its own dedicated 0..1
+    // control, not a threshold gate on the tail of Texture's travel (an
+    // earlier design put fuzz only above 80% Texture; that fought the
+    // clean Glow<->Edge morph on the same knob and made both harder to
+    // dial in independently).
+    void triggerHaze(double sampleRate, float pitch, float durationMs, float pan, float texture,
+                      float fuzz) {
         sineOscillator_.setWaveform(VoiceOscillator::Waveform::Sine);
         sineOscillator_.setSampleRate(sampleRate);
         sineOscillator_.reset();
@@ -216,6 +220,18 @@ public:
         fmOscillator_.setWaveform(VoiceOscillator::Waveform::Fm);
         fmOscillator_.setSampleRate(sampleRate);
         fmOscillator_.reset();
+        hazeUnisonSaw1_.setWaveform(VoiceOscillator::Waveform::Saw);
+        hazeUnisonSaw1_.setSampleRate(sampleRate);
+        hazeUnisonSaw1_.reset();
+        hazeUnisonSaw2_.setWaveform(VoiceOscillator::Waveform::Saw);
+        hazeUnisonSaw2_.setSampleRate(sampleRate);
+        hazeUnisonSaw2_.reset();
+        hazeUnisonSaw3_.setWaveform(VoiceOscillator::Waveform::Saw);
+        hazeUnisonSaw3_.setSampleRate(sampleRate);
+        hazeUnisonSaw3_.reset();
+        hazeUnisonSaw4_.setWaveform(VoiceOscillator::Waveform::Saw);
+        hazeUnisonSaw4_.setSampleRate(sampleRate);
+        hazeUnisonSaw4_.reset();
         mode_ = RenderMode::HazeBlend;
 
         const float clampedTexture = std::max(0.0f, std::min(1.0f, texture));
@@ -226,9 +242,32 @@ public:
         // sqrt-shaped, not linear, so the fuzz reaches most of its
         // intensity well before 100% rather than only arriving right at
         // the very top of the knob's travel.
-        const float rawFuzzAmount = std::max(
-            0.0f, (clampedTexture - kHazeFuzzThreshold) / (1.0f - kHazeFuzzThreshold));
-        const float fuzzAmount = std::sqrt(rawFuzzAmount);
+        const float clampedFuzz = std::max(0.0f, std::min(1.0f, fuzz));
+        const float fuzzAmount = std::sqrt(clampedFuzz);
+        // Fuzz-only Saw injection, independent of Texture's own
+        // hazeSawWeight_/sawOscillator_ entirely (dedicated unison
+        // oscillators below — Texture's own tone morph is never touched).
+        // At low Texture (the "reed" setting this session confirmed is
+        // liked) the pre-clip signal is mostly a near-pure Sine — clipping
+        // that just rounds off a smooth wave, since there's barely any
+        // harmonic content for the distortion to turn into buzz. This
+        // guarantees a genuinely broadband signal reaches the clipper
+        // whenever Fuzz is turned up, regardless of Texture.
+        hazeFuzzInjectedSawWeight_ = lerp(0.0f, kHazeFuzzInjectedSawWeight, fuzzAmount);
+        // Unison: 4 Saw voices detuned around the note's own pitch (in
+        // addition to the single-oscillator injection above), all clipped
+        // together by the same waveshaper. A single clipped oscillator,
+        // however hard-driven, only ever reads as one thin source — "fat"
+        // guitar-wall character (the Siamese Dream reference this whole
+        // saga has been chasing) comes from *multiple* simultaneously
+        // sounding sources hitting a clipper together, generating real
+        // intermodulation between them, not from one voice clipped harder.
+        // Detune is expressed in normalized-pitch units, which map
+        // exponentially to Hz (see VoiceOscillator::frequencyFromNormalizedPitch)
+        // — a fixed additive offset here is therefore a fixed proportional
+        // (cents) detune everywhere in the pitch range, not a fixed Hz
+        // amount that would go sharp/flat inconsistently by register.
+        hazeUnisonBlend_ = fuzzAmount;
         hazeDriveAmount_ = lerp(kHazeMinDrive, kHazeMaxDrive, fuzzAmount);
         hazeLoudnessCompensation_ = lerp(1.0f, kHazeMaxDriveLoudnessCompensation, fuzzAmount);
         // Both bounded to the same ±1 ceiling as the tanh stage — these
@@ -248,6 +287,11 @@ public:
         hazeHardClipBlend_ = lerp(0.0f, kHazeMaxHardClipBlend, fuzzAmount);
         hazeAsymmetry_ = lerp(0.0f, kHazeMaxAsymmetry, fuzzAmount);
         hazeFuzzFilterState_ = 0.0f;
+        hazeCabFilterState1_ = 0.0f;
+        hazeCabFilterState2_ = 0.0f;
+        // How much the post-clip "cabinet" darkening (see render path)
+        // engages — 0 at no fuzz (untouched), full strength at max fuzz.
+        hazeCabBlend_ = fuzzAmount;
 
         beginLife(sampleRate, pitch, durationMs, pan, Character::Ambient);
 
@@ -268,6 +312,23 @@ public:
         const float fuzzCutoffHz = static_cast<float>(fundamentalHz_) * fuzzFilterMultiple;
         hazeFuzzFilterCoefficient_ =
             1.0f - std::exp(-twoPi * fuzzCutoffHz / static_cast<float>(sampleRate));
+
+        // "Cabinet" lowpass, post-clip — a real distortion pedal is never
+        // heard on its own, only through a guitar amp + speaker cabinet,
+        // whose frequency response rolls off hard above ~3-4kHz with
+        // essentially nothing above ~5kHz. Skipping that (a bare clipper
+        // with nothing after it) leaves every harsh upper-harmonic clipping
+        // byproduct fully exposed — that's what reads as synthetic/"Tron"
+        // rather than a warm, thick, driven-amp character. Unlike the
+        // pre-distortion filter above (relative to the fundamental, opens/
+        // closes to manage aliasing), this is a *fixed absolute* cutoff —
+        // a real speaker's high rolloff doesn't move with the note being
+        // played — and cascaded two-pole (two one-pole stages back to
+        // back) for a steeper ~12dB/octave slope closer to an actual
+        // cabinet than a single 6dB/octave pole.
+        const float cabCoefficient =
+            1.0f - std::exp(-twoPi * kHazeCabCutoffHz / static_cast<float>(sampleRate));
+        hazeCabFilterCoefficient_ = cabCoefficient;
     }
 
     bool isActive() const { return remainingLifeSamples_ > 0; }
@@ -351,8 +412,23 @@ public:
                 const float sineSample = sineOscillator_.renderSample(pitch_);
                 const float sawSample = sawOscillator_.renderSample(pitch_);
                 const float fmSample = fmOscillator_.renderSample(pitch_);
+                // Fuzz-only unison — 4 detuned Saw voices, independent of
+                // Texture's own sawOscillator_/hazeSawWeight_. Averaged
+                // (not just summed) so the unison's overall contribution
+                // stays comparable in level to the single-voice injection
+                // it's layered against, letting hazeFuzzInjectedSawWeight_
+                // control total amount the same way it did before.
+                const float unisonSaw =
+                    (hazeUnisonSaw1_.renderSample(pitch_ - kHazeUnisonDetune2) +
+                     hazeUnisonSaw2_.renderSample(pitch_ - kHazeUnisonDetune1) +
+                     hazeUnisonSaw3_.renderSample(pitch_ + kHazeUnisonDetune1) +
+                     hazeUnisonSaw4_.renderSample(pitch_ + kHazeUnisonDetune2)) *
+                    0.25f;
+                const float injectedSaw =
+                    sawSample + (unisonSaw - sawSample) * hazeUnisonBlend_;
                 const float raw = hazeSineWeight_ * sineSample + hazeFmWeight_ * fmSample +
-                                  hazeSawWeight_ * sawSample;
+                                  hazeSawWeight_ * sawSample +
+                                  hazeFuzzInjectedSawWeight_ * injectedSaw;
                 // Filtered *before* the waveshaper — see triggerHaze —
                 // so the fuzz stage isn't distorting Saw's raw aliased
                 // content directly.
@@ -367,7 +443,15 @@ public:
                 const float soft = std::tanh(biased * hazeDriveAmount_) / std::tanh(hazeDriveAmount_);
                 const float hard = std::max(-1.0f, std::min(1.0f, biased * kHazeHardClipDrive));
                 const float shaped = soft + (hard - soft) * hazeHardClipBlend_;
-                sample = shaped * hazeLoudnessCompensation_;
+                // "Cabinet" darkening — see triggerHaze. Cascaded two-pole
+                // lowpass at a fixed absolute cutoff, crossfaded in by
+                // hazeCabBlend_ so clean (fuzz=0) playing is untouched.
+                hazeCabFilterState1_ +=
+                    (shaped - hazeCabFilterState1_) * hazeCabFilterCoefficient_;
+                hazeCabFilterState2_ +=
+                    (hazeCabFilterState1_ - hazeCabFilterState2_) * hazeCabFilterCoefficient_;
+                const float cabbed = shaped + (hazeCabFilterState2_ - shaped) * hazeCabBlend_;
+                sample = cabbed * hazeLoudnessCompensation_;
                 break;
             }
         }
@@ -480,11 +564,12 @@ private:
     static constexpr float kHazeGlowFmWeight = 0.25f;
     static constexpr float kHazeEdgeFmWeight = 0.55f;
     static constexpr float kHazeEdgeSawWeight = 0.45f;
-    // Haze's fuzz stage — inert below this fraction of Texture (so "0
-    // stays the same" as before, matching the earlier Glow<->Edge-only
-    // design), then ramps from near-clean to a thick, heavily saturated
-    // Big-Muff-style drive by 1.0. Drive and loudness compensation are
-    // deliberately decoupled: drive controls how aggressively the
+    // Haze's fuzz stage — its own dedicated Fuzz control (fully decoupled
+    // from Texture's Glow<->Edge morph; an earlier design gated it to
+    // Texture's last 20%, which fought the tone morph on the same knob).
+    // Ramps from near-clean to a thick, heavily saturated Big-Muff-style
+    // drive by 1.0. Drive and loudness compensation are deliberately
+    // decoupled: drive controls how aggressively the
     // waveform gets pushed toward tanh's ceiling (the actual distorted
     // *character* — pushed far past Bass's Dirt ceiling of 9.0, this is
     // meant to be properly fuzzed out), while compensation controls how
@@ -508,13 +593,28 @@ private:
     // the level that loudness-matches clean rather than either burying it
     // (0.45) or making the whole range louder than clean (0.9, tried and
     // rejected earlier) — same level, more bite.
-    static constexpr float kHazeFuzzThreshold = 0.8f;
+    // TEMPORARY — deliberately maxed out past what's musically reasonable,
+    // per explicit request ("show me the most saturation you can do") so
+    // we can hear the actual ceiling of this architecture before deciding
+    // whether to dial back or push further with something structurally
+    // different (e.g. bitcrushing, wavefolding). hardClipBlend_ at 1.0
+    // means pure hard clip with zero tanh softening at max fuzz.
     static constexpr float kHazeMinDrive = 0.02f;
-    static constexpr float kHazeMaxDrive = 35.0f;
-    static constexpr float kHazeMaxDriveLoudnessCompensation = 0.85f;
-    static constexpr float kHazeMaxHardClipBlend = 0.65f;
-    static constexpr float kHazeMaxAsymmetry = 0.18f;
+    static constexpr float kHazeMaxDrive = 200.0f;
+    static constexpr float kHazeMaxDriveLoudnessCompensation = 1.0f;
+    static constexpr float kHazeMaxHardClipBlend = 1.0f;
+    static constexpr float kHazeMaxAsymmetry = 0.4f;
     static constexpr float kHazeHardClipDrive = 4.0f;
+    // Fuzz-only Saw injection (triggerHaze) — guarantees broadband
+    // material reaches the clipper even at low Texture.
+    static constexpr float kHazeFuzzInjectedSawWeight = 1.0f;
+    // Fuzz-only unison detune (triggerHaze/render) — normalized-pitch
+    // units, exponential mapping so this is a fixed proportional (cents)
+    // spread everywhere. ~0.006/0.015 work out to roughly ±25/±60 cents
+    // for the 4 voices — wide enough to genuinely beat/thicken rather than
+    // just lightly chorus.
+    static constexpr float kHazeUnisonDetune1 = 0.006f;
+    static constexpr float kHazeUnisonDetune2 = 0.015f;
     // Pre-distortion filter (triggerHaze) — barely engaged at fuzzAmount=0
     // (20x fundamental is well above anything the fuzz stage's inert
     // range would otherwise touch), closing down to a real lowpass at
@@ -528,6 +628,24 @@ private:
     // waveshaper to chew on.
     static constexpr float kHazeFuzzFilterOpenMultiple = 20.0f;
     static constexpr float kHazeFuzzFilterDarkMultiple = 12.0f;
+    // "Cabinet" post-clip lowpass (triggerHaze/render path) — a real
+    // distortion pedal is always heard through a guitar amp + speaker
+    // cabinet, whose response rolls off hard above ~3-4kHz. Skipping that
+    // leaves harsh clipping byproducts fully exposed, which is what reads
+    // as synthetic/digital rather than a warm driven-amp character. (An
+    // earlier attempt at post-clip shaping here — a fundamental-relative
+    // mid/low scoop — was a real bug: its cutoff sat almost on top of the
+    // fundamental itself, so it tracked nearly the whole clipped signal
+    // and subtracted most of it back out, gutting the tone rather than
+    // shaping it; measured live, crest factor went the *wrong* direction,
+    // 1.56 -> 2.02, i.e. less square as fuzz increased. Removed in favor
+    // of this fixed-frequency cabinet-style lowpass instead.) 3200Hz is a
+    // typical guitar-cab high rolloff point; unlike the pre-distortion
+    // filter above this is an absolute frequency, not fundamental-
+    // relative — a real speaker's response doesn't move with the note.
+    // TEMPORARY — pushed wide open (effectively bypassed) for the "show
+    // me the ceiling" test so nothing softens the rawest possible clip.
+    static constexpr float kHazeCabCutoffHz = 18000.0f;
 
     static float hannEnvelope(float t) { return 0.5f - 0.5f * std::cos(twoPi * t); }
 
@@ -594,6 +712,12 @@ private:
     VoiceOscillator sawOscillator_;    // used by triggerBlended()/triggerAmbient()
     VoiceOscillator noiseOscillator_;  // used by triggerBlended()/triggerAmbient()
     VoiceOscillator fmOscillator_;     // used by triggerAmbient() only
+    // Fuzz-only unison Saw layer (triggerHaze) — see kHazeUnisonDetune*.
+    // Never touched by Texture's own hazeSawWeight_/sawOscillator_.
+    VoiceOscillator hazeUnisonSaw1_;
+    VoiceOscillator hazeUnisonSaw2_;
+    VoiceOscillator hazeUnisonSaw3_;
+    VoiceOscillator hazeUnisonSaw4_;
     RenderMode mode_ = RenderMode::Single;
     float driveAmount_ = kMinDrive;
     float sawWeight_ = 0.0f;  // triggerBlended() only — kCoreSawWeight scaled by Dirt, see there
@@ -608,12 +732,18 @@ private:
     float hazeSineWeight_ = 0.0f;  // triggerHaze() only
     float hazeFmWeight_ = 0.0f;    // triggerHaze() only
     float hazeSawWeight_ = 0.0f;   // triggerHaze() only
+    float hazeFuzzInjectedSawWeight_ = 0.0f;  // triggerHaze() only
+    float hazeUnisonBlend_ = 0.0f;            // triggerHaze() only
     float hazeDriveAmount_ = kHazeMinDrive;   // triggerHaze() only
     float hazeLoudnessCompensation_ = 1.0f;   // triggerHaze() only
     float hazeHardClipBlend_ = 0.0f;          // triggerHaze() only
     float hazeAsymmetry_ = 0.0f;              // triggerHaze() only
     float hazeFuzzFilterState_ = 0.0f;        // triggerHaze() only
     float hazeFuzzFilterCoefficient_ = 1.0f;  // triggerHaze() only
+    float hazeCabFilterState1_ = 0.0f;        // triggerHaze() only
+    float hazeCabFilterState2_ = 0.0f;        // triggerHaze() only
+    float hazeCabFilterCoefficient_ = 1.0f;   // triggerHaze() only
+    float hazeCabBlend_ = 0.0f;               // triggerHaze() only
     Character character_ = Character::Ambient;
     float pitch_ = 0.5f;
     double sampleRate_ = 44100.0;

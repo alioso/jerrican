@@ -38,8 +38,9 @@ public:
     // values and exact old behavior (pitch-drift retarget rate /
     // grain-spawn density). timbre similarly means Material for Ambient
     // (new DSP — see Grain::triggerAmbient) but is otherwise unchanged for
-    // the other three. busy/sustain/attack are Bass-only, cleanliness is
-    // Ambient-only — unused by whichever voices don't consume them.
+    // the other three. busy/sustain are Bass-only, cleanliness is
+    // Ambient-only, attack is Bass-only (envelope shape) *and* reused as
+    // Haze's Fuzz amount — unused by whichever voices don't consume them.
     struct InitialVoice {
         const char* name;
         bool enabled;
@@ -90,7 +91,7 @@ public:
           1500.0f, 4000.0f, Grain::Character::Ambient},
          {"Spark", true, 0.55f, 0.60f, 0.85f, 0.70f, 0.50f, 0.45f, 0.15f, 0.5f, 0.5f, 0.5f, 0.5f, 7,
           150.0f, 400.0f, Grain::Character::Plucked},
-         {"Haze", true, 0.50f, 0.15f, 0.35f, 0.75f, 0.20f, 0.15f, 0.15f, 0.5f, 0.5f, 0.5f, 0.5f, 4,
+         {"Haze", true, 0.50f, 0.15f, 0.35f, 0.75f, 0.20f, 0.15f, 0.15f, 0.5f, 0.5f, 0.5f, 0.0f, 4,
           2000.0f, 5000.0f, Grain::Character::Ambient}}};
 
     JerricanAudioProcessor()
@@ -272,8 +273,10 @@ public:
                     evolution.resyncSustain(value);
                 }
                 break;
+            // Bass's Attack, reused as Haze's Fuzz — see the Haze
+            // renderHazeSample call site.
             case MidiTarget::VoiceAttack:
-                if (focused == 0) {
+                if (focused == 0 || focused == 3) {
                     voice.setAttack(value);
                     evolution.resyncAttack(value);
                 }
@@ -342,7 +345,7 @@ public:
                 break;
             }
             case MidiTarget::VoiceAttackEvoToggle: {
-                if (focused == 0) {
+                if (focused == 0 || focused == 3) {
                     const bool on = !evolution.isAttackEnabled();
                     evolution.setAttackEnabled(on);
                     if (on) evolution.resyncAttack(voice.getAttack());
@@ -509,10 +512,16 @@ public:
                     // triggerHaze's tone instead of the random
                     // pickWaveform lottery Spark still uses. `active`
                     // gates new-grain spawning, same reasoning as Ambient.
+                    // getAttack() reused as Haze's Fuzz amount — same
+                    // generic-slot-reuse pattern as Ambient's Cleanliness;
+                    // Bass-only meaning nowhere required, VoiceModel/
+                    // EvolutionEngine/MidiBindingManager/SceneState all
+                    // already carry this field for every voice.
                     voiceSample = cloud.renderHazeSample(
                         voice.getPitchRangeLow(), voice.getPitchRangeHigh(), voice.getTimbre(),
                         voice.getGroove(), voice.getWander(), voice.getVolume(), voice.getDissonance(),
-                        playing && voice.isEnabled(), voice.getRootSemitoneOffset());
+                        voice.getAttack(), playing && voice.isEnabled(),
+                        voice.getRootSemitoneOffset());
                 } else {
                     // Spark: unchanged continuous stochastic model.
                     // getGroove()/getWander() are the same underlying
@@ -724,12 +733,14 @@ public:
             const float wander = randomizeRandom_.nextFloat01();
             const float volume = randomizeRandom_.nextFloat01();
             const float dissonance = randomizeRandom_.nextFloat01();
-            // Bass-only: also reroll Busy/Sustain/Attack, its other
-            // bespoke controls — meaningless for Spark/Haze, left
-            // untouched. Ambient-only: same for Cleanliness.
+            // Bass-only: also reroll Busy/Sustain, its other bespoke
+            // controls — meaningless for Spark/Haze, left untouched.
+            // Ambient-only: same for Cleanliness. Attack is Bass-only
+            // (envelope shape) *and* Haze-only (reused as Fuzz amount).
             const float busy = i == 0 ? randomizeRandom_.nextFloat01() : voices_[i].getBusy();
             const float sustain = i == 0 ? randomizeRandom_.nextFloat01() : voices_[i].getSustain();
-            const float attack = i == 0 ? randomizeRandom_.nextFloat01() : voices_[i].getAttack();
+            const float attack =
+                (i == 0 || i == 3) ? randomizeRandom_.nextFloat01() : voices_[i].getAttack();
             const float cleanliness =
                 i == 1 ? randomizeRandom_.nextFloat01() : voices_[i].getCleanliness();
 
