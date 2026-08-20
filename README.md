@@ -113,32 +113,40 @@ never plays the same way twice.
 - [Sources/JerricanApp/AudioRecorder.h](Sources/JerricanApp/AudioRecorder.h) — background-threaded WAV export of the final mix
 - [Sources/JerricanApp/FastRandom.h](Sources/JerricanApp/FastRandom.h) — shared lightweight RNG
 - [Tests/](Tests/) — headless regression tests, one per JUCE-free engine class
-- [build/](build/) — generated build output (gitignored)
+- [build-dev/](build-dev/) — day-to-day dev build output (gitignored)
+- [build-dist/](build-dist/) / [dist/](dist/) — release build tree and installed output (gitignored)
 
 ## Build locally
 
-From the project root:
+Day-to-day development (Debug build, into `build-dev/`):
 
 ```bash
-cmake -S . -B build
-cmake --build build -j4
+./dev          # build + relaunch the Standalone app
+./dev build    # just build, no launch
+./dev test     # build, then run every regression test
 ```
 
-The built plugins are produced at:
+The dev Standalone app lands at:
 
 ```bash
-build/JerricanApp_artefacts/Standalone/Jerrican.app
-build/JerricanApp_artefacts/AU/Jerrican.component
-build/JerricanApp_artefacts/VST3/Jerrican.vst3
+build-dev/JerricanApp_artefacts/Debug/Standalone/Jerrican.app
 ```
 
-Run the regression tests directly as built binaries, e.g.:
+Release build for distribution (Release build, into `build-dist/`, installed
+to `dist/`) — mirrors the exact steps used for cutting a real release:
 
 ```bash
-./build/VoiceModelTests
-./build/VoiceOscillatorTests
-./build/GrainCloudTests
-./build/EvolutionEngineTests
+./release          # macOS
+release.bat        # Windows, from a "x64 Native Tools Command Prompt for VS"
+```
+
+Both pull latest, wipe and reconfigure `build-dist/`, build every format, and
+install into:
+
+```bash
+dist/Standalone/Jerrican.app   (or Jerrican.exe on Windows)
+dist/AU/Jerrican.component     (macOS only)
+dist/VST3/Jerrican.vst3
 ```
 
 ## Relationship to Marmite
