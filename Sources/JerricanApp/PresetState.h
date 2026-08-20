@@ -7,7 +7,7 @@
 // enabled state, and per-parameter Evolution toggles, plus the global
 // Evolution/Reverb/Volume controls. Deliberately excludes transport
 // run/stop state (isPlaying_ isn't a "control", it's transient session
-// state) — a Scene is "how the instrument is set up", not "whether it's
+// state) — a Preset is "how the instrument is set up", not "whether it's
 // currently making sound". Plain C++, JUCE-free, same convention as
 // MidiBinding — Main.cpp is the only place that reads/writes this
 // against the live VoiceModel/EvolutionEngine/atomics.
@@ -18,7 +18,7 @@
 // only add a backward-compatibility migration for zero benefit. busy/
 // sustain/attack are Bass-only, cleanliness is Ambient-only (unused, but
 // still saved/loaded, for the other voices).
-struct VoiceSceneState {
+struct VoicePresetState {
     bool enabled = true;
     float volume = 0.0f;
     float pitchLow = 0.0f;
@@ -44,8 +44,8 @@ struct VoiceSceneState {
     bool attackEvoEnabled = true;
 };
 
-struct SceneState {
-    std::array<VoiceSceneState, 4> voices;
+struct PresetState {
+    std::array<VoicePresetState, 4> voices;
     float evolutionAmount = 0.0f;
     float evolutionSpeed = 0.5f;
     float reverbRoom = 0.0f;
@@ -59,17 +59,17 @@ struct SceneState {
     int meterDenominator = 4;
 };
 
-namespace SceneStateDetail {
+namespace PresetStateDetail {
 inline constexpr float kFloatEpsilon = 1e-4f;
 inline bool nearlyEqual(float a, float b) { return std::abs(a - b) < kFloatEpsilon; }
-}  // namespace SceneStateDetail
+}  // namespace PresetStateDetail
 
 // Used by PresetControls to detect dirty/matching state, the same way
 // MidiBindingManager::equals() is for bindings. Floats are compared with
 // a small epsilon rather than bit-for-bit, since round-tripping through
-// text (ScenePresetStore's save/load) isn't guaranteed to be exact.
-inline bool operator==(const VoiceSceneState& a, const VoiceSceneState& b) {
-    using SceneStateDetail::nearlyEqual;
+// text (PresetStore's save/load) isn't guaranteed to be exact.
+inline bool operator==(const VoicePresetState& a, const VoicePresetState& b) {
+    using PresetStateDetail::nearlyEqual;
     return a.enabled == b.enabled && nearlyEqual(a.volume, b.volume) &&
            nearlyEqual(a.pitchLow, b.pitchLow) && nearlyEqual(a.pitchHigh, b.pitchHigh) &&
            nearlyEqual(a.timbre, b.timbre) && nearlyEqual(a.motion, b.motion) &&
@@ -86,8 +86,8 @@ inline bool operator==(const VoiceSceneState& a, const VoiceSceneState& b) {
            a.attackEvoEnabled == b.attackEvoEnabled;
 }
 
-inline bool operator==(const SceneState& a, const SceneState& b) {
-    using SceneStateDetail::nearlyEqual;
+inline bool operator==(const PresetState& a, const PresetState& b) {
+    using PresetStateDetail::nearlyEqual;
     for (std::size_t i = 0; i < a.voices.size(); ++i) {
         if (!(a.voices[i] == b.voices[i])) {
             return false;

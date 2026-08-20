@@ -16,14 +16,15 @@
 #include "MidiBindingManager.h"
 #include "MidiPresetStore.h"
 #include "PatternClock.h"
-#include "ScenePresetStore.h"
-#include "SceneState.h"
+#include "FactoryPresets.h"
+#include "PresetStore.h"
+#include "PresetState.h"
 #include "VoiceModel.h"
 
 class JerricanAudioProcessorEditor;  // defined in JerricanEditor.h, included at the bottom.
 
 // Owns every piece of live engine state (voices, grain clouds, evolution,
-// reverb, MIDI Learn/Scenes stores, the recorder) and does all audio/MIDI
+// reverb, MIDI Learn/Presets stores, the recorder) and does all audio/MIDI
 // processing — the AudioProcessor half of the Processor/Editor split. Any
 // juce::Component work belongs in JerricanAudioProcessorEditor instead;
 // this class must stay usable with no editor ever created (headless
@@ -156,6 +157,13 @@ public:
                                           initial.busy, initial.sustain, initial.cleanliness,
                                           initial.attack);
         }
+        presetStore_.bootstrapIfEmpty(
+            juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                .getChildFile("Jerrican")
+                .getChildFile("Scenes")
+                .getFullPathName()
+                .toStdString(),
+            ".jscene", factoryPresets());
         recordingThread_.startThread();
     }
 
@@ -533,7 +541,7 @@ public:
                     // getAttack() reused as Haze's Fuzz amount — same
                     // generic-slot-reuse pattern as Ambient's Cleanliness;
                     // Bass-only meaning nowhere required, VoiceModel/
-                    // EvolutionEngine/MidiBindingManager/SceneState all
+                    // EvolutionEngine/MidiBindingManager/PresetState all
                     // already carry this field for every voice.
                     voiceSample = cloud.renderHazeSample(
                         voice.getPitchRangeLow(), voice.getPitchRangeHigh(), voice.getTimbre(),
@@ -627,57 +635,57 @@ public:
     }
 
     void getStateInformation(juce::MemoryBlock& destData) override {
-        const auto text = ScenePresetStore::serialize(captureSceneState());
+        const auto text = PresetStore::serialize(capturePresetState());
         destData.replaceAll(text.data(), text.size());
     }
 
     void setStateInformation(const void* data, int sizeInBytes) override {
         const std::string text(static_cast<const char*>(data), static_cast<size_t>(sizeInBytes));
-        applySceneState(ScenePresetStore::deserialize(text));
+        applyPresetState(PresetStore::deserialize(text));
     }
 
-    // Reads every control's current value — everything a Scene (or a
+    // Reads every control's current value — everything a Preset (or a
     // plugin instance's own save/reload) captures, deliberately excluding
     // transport run/stop state (isPlaying_).
-    SceneState captureSceneState() const {
-        SceneState scene;
+    PresetState capturePresetState() const {
+        PresetState preset;
         for (std::size_t i = 0; i < voices_.size(); ++i) {
             const auto& voice = voices_[i];
             const auto& evolution = evolutionEngines_[i];
-            auto& voiceScene = scene.voices[i];
-            voiceScene.enabled = voice.isEnabled();
-            voiceScene.volume = voice.getVolume();
-            voiceScene.pitchLow = voice.getPitchRangeLow();
-            voiceScene.pitchHigh = voice.getPitchRangeHigh();
-            voiceScene.timbre = voice.getTimbre();
-            voiceScene.motion = voice.getGroove();
-            voiceScene.complexity = voice.getWander();
-            voiceScene.dissonance = voice.getDissonance();
-            voiceScene.rootSemitoneOffset = voice.getRootSemitoneOffset();
-            voiceScene.busy = voice.getBusy();
-            voiceScene.sustain = voice.getSustain();
-            voiceScene.cleanliness = voice.getCleanliness();
-            voiceScene.attack = voice.getAttack();
-            voiceScene.volumeEvoEnabled = evolution.isVolumeEnabled();
-            voiceScene.pitchRangeEvoEnabled = evolution.isPitchRangeEnabled();
-            voiceScene.timbreEvoEnabled = evolution.isTimbreEnabled();
-            voiceScene.motionEvoEnabled = evolution.isGrooveEnabled();
-            voiceScene.complexityEvoEnabled = evolution.isWanderEnabled();
-            voiceScene.dissonanceEvoEnabled = evolution.isDissonanceEnabled();
-            voiceScene.busyEvoEnabled = evolution.isBusyEnabled();
-            voiceScene.sustainEvoEnabled = evolution.isSustainEnabled();
-            voiceScene.cleanlinessEvoEnabled = evolution.isCleanlinessEnabled();
-            voiceScene.attackEvoEnabled = evolution.isAttackEnabled();
+            auto& voicePreset = preset.voices[i];
+            voicePreset.enabled = voice.isEnabled();
+            voicePreset.volume = voice.getVolume();
+            voicePreset.pitchLow = voice.getPitchRangeLow();
+            voicePreset.pitchHigh = voice.getPitchRangeHigh();
+            voicePreset.timbre = voice.getTimbre();
+            voicePreset.motion = voice.getGroove();
+            voicePreset.complexity = voice.getWander();
+            voicePreset.dissonance = voice.getDissonance();
+            voicePreset.rootSemitoneOffset = voice.getRootSemitoneOffset();
+            voicePreset.busy = voice.getBusy();
+            voicePreset.sustain = voice.getSustain();
+            voicePreset.cleanliness = voice.getCleanliness();
+            voicePreset.attack = voice.getAttack();
+            voicePreset.volumeEvoEnabled = evolution.isVolumeEnabled();
+            voicePreset.pitchRangeEvoEnabled = evolution.isPitchRangeEnabled();
+            voicePreset.timbreEvoEnabled = evolution.isTimbreEnabled();
+            voicePreset.motionEvoEnabled = evolution.isGrooveEnabled();
+            voicePreset.complexityEvoEnabled = evolution.isWanderEnabled();
+            voicePreset.dissonanceEvoEnabled = evolution.isDissonanceEnabled();
+            voicePreset.busyEvoEnabled = evolution.isBusyEnabled();
+            voicePreset.sustainEvoEnabled = evolution.isSustainEnabled();
+            voicePreset.cleanlinessEvoEnabled = evolution.isCleanlinessEnabled();
+            voicePreset.attackEvoEnabled = evolution.isAttackEnabled();
         }
-        scene.evolutionAmount = evolutionAmount_.load(std::memory_order_relaxed);
-        scene.evolutionSpeed = evolutionSpeed_.load(std::memory_order_relaxed);
-        scene.reverbRoom = reverbRoom_.load(std::memory_order_relaxed);
-        scene.reverbDecay = reverbDecay_.load(std::memory_order_relaxed);
-        scene.masterVolume = masterVolume_.load(std::memory_order_relaxed);
-        scene.tempo = tempo_.load(std::memory_order_relaxed);
-        scene.meterNumerator = meterNumeratorDisplay_.load(std::memory_order_relaxed);
-        scene.meterDenominator = meterDenominatorDisplay_.load(std::memory_order_relaxed);
-        return scene;
+        preset.evolutionAmount = evolutionAmount_.load(std::memory_order_relaxed);
+        preset.evolutionSpeed = evolutionSpeed_.load(std::memory_order_relaxed);
+        preset.reverbRoom = reverbRoom_.load(std::memory_order_relaxed);
+        preset.reverbDecay = reverbDecay_.load(std::memory_order_relaxed);
+        preset.masterVolume = masterVolume_.load(std::memory_order_relaxed);
+        preset.tempo = tempo_.load(std::memory_order_relaxed);
+        preset.meterNumerator = meterNumeratorDisplay_.load(std::memory_order_relaxed);
+        preset.meterDenominator = meterDenominatorDisplay_.load(std::memory_order_relaxed);
+        return preset;
     }
 
     // Writes a full snapshot back. Touches only atomics/VoiceModel/
@@ -686,47 +694,47 @@ public:
     // from these on its next timer tick (see JerricanAudioProcessorEditor
     // ::timerCallback/refreshFromModel) rather than being poked directly
     // from here, so this stays editor-agnostic.
-    void applySceneState(const SceneState& scene) {
+    void applyPresetState(const PresetState& preset) {
         for (std::size_t i = 0; i < voices_.size(); ++i) {
-            const auto& voiceScene = scene.voices[i];
-            voices_[i].setEnabled(voiceScene.enabled);
-            voices_[i].setVolume(voiceScene.volume);
-            voices_[i].setPitchRange(voiceScene.pitchLow, voiceScene.pitchHigh);
-            voices_[i].setTimbre(voiceScene.timbre);
-            voices_[i].setGroove(voiceScene.motion);
-            voices_[i].setWander(voiceScene.complexity);
-            voices_[i].setDissonance(voiceScene.dissonance);
-            voices_[i].setRootSemitoneOffset(voiceScene.rootSemitoneOffset);
-            voices_[i].setBusy(voiceScene.busy);
-            voices_[i].setSustain(voiceScene.sustain);
-            voices_[i].setCleanliness(voiceScene.cleanliness);
-            voices_[i].setAttack(voiceScene.attack);
+            const auto& voicePreset = preset.voices[i];
+            voices_[i].setEnabled(voicePreset.enabled);
+            voices_[i].setVolume(voicePreset.volume);
+            voices_[i].setPitchRange(voicePreset.pitchLow, voicePreset.pitchHigh);
+            voices_[i].setTimbre(voicePreset.timbre);
+            voices_[i].setGroove(voicePreset.motion);
+            voices_[i].setWander(voicePreset.complexity);
+            voices_[i].setDissonance(voicePreset.dissonance);
+            voices_[i].setRootSemitoneOffset(voicePreset.rootSemitoneOffset);
+            voices_[i].setBusy(voicePreset.busy);
+            voices_[i].setSustain(voicePreset.sustain);
+            voices_[i].setCleanliness(voicePreset.cleanliness);
+            voices_[i].setAttack(voicePreset.attack);
 
-            const float center = (voiceScene.pitchLow + voiceScene.pitchHigh) * 0.5f;
-            const float width = voiceScene.pitchHigh - voiceScene.pitchLow;
-            evolutionEngines_[i].resetTo(center, width, voiceScene.volume, voiceScene.timbre,
-                                         voiceScene.motion, voiceScene.complexity,
-                                         voiceScene.dissonance, voiceScene.busy, voiceScene.sustain,
-                                         voiceScene.cleanliness, voiceScene.attack);
-            evolutionEngines_[i].setVolumeEnabled(voiceScene.volumeEvoEnabled);
-            evolutionEngines_[i].setPitchRangeEnabled(voiceScene.pitchRangeEvoEnabled);
-            evolutionEngines_[i].setTimbreEnabled(voiceScene.timbreEvoEnabled);
-            evolutionEngines_[i].setGrooveEnabled(voiceScene.motionEvoEnabled);
-            evolutionEngines_[i].setWanderEnabled(voiceScene.complexityEvoEnabled);
-            evolutionEngines_[i].setDissonanceEnabled(voiceScene.dissonanceEvoEnabled);
-            evolutionEngines_[i].setBusyEnabled(voiceScene.busyEvoEnabled);
-            evolutionEngines_[i].setSustainEnabled(voiceScene.sustainEvoEnabled);
-            evolutionEngines_[i].setCleanlinessEnabled(voiceScene.cleanlinessEvoEnabled);
-            evolutionEngines_[i].setAttackEnabled(voiceScene.attackEvoEnabled);
+            const float center = (voicePreset.pitchLow + voicePreset.pitchHigh) * 0.5f;
+            const float width = voicePreset.pitchHigh - voicePreset.pitchLow;
+            evolutionEngines_[i].resetTo(center, width, voicePreset.volume, voicePreset.timbre,
+                                         voicePreset.motion, voicePreset.complexity,
+                                         voicePreset.dissonance, voicePreset.busy, voicePreset.sustain,
+                                         voicePreset.cleanliness, voicePreset.attack);
+            evolutionEngines_[i].setVolumeEnabled(voicePreset.volumeEvoEnabled);
+            evolutionEngines_[i].setPitchRangeEnabled(voicePreset.pitchRangeEvoEnabled);
+            evolutionEngines_[i].setTimbreEnabled(voicePreset.timbreEvoEnabled);
+            evolutionEngines_[i].setGrooveEnabled(voicePreset.motionEvoEnabled);
+            evolutionEngines_[i].setWanderEnabled(voicePreset.complexityEvoEnabled);
+            evolutionEngines_[i].setDissonanceEnabled(voicePreset.dissonanceEvoEnabled);
+            evolutionEngines_[i].setBusyEnabled(voicePreset.busyEvoEnabled);
+            evolutionEngines_[i].setSustainEnabled(voicePreset.sustainEvoEnabled);
+            evolutionEngines_[i].setCleanlinessEnabled(voicePreset.cleanlinessEvoEnabled);
+            evolutionEngines_[i].setAttackEnabled(voicePreset.attackEvoEnabled);
         }
 
-        evolutionAmount_.store(scene.evolutionAmount, std::memory_order_relaxed);
-        evolutionSpeed_.store(scene.evolutionSpeed, std::memory_order_relaxed);
-        reverbRoom_.store(scene.reverbRoom, std::memory_order_relaxed);
-        reverbDecay_.store(scene.reverbDecay, std::memory_order_relaxed);
-        masterVolume_.store(scene.masterVolume, std::memory_order_relaxed);
-        setTempo(scene.tempo);
-        requestMeter(scene.meterNumerator, scene.meterDenominator);
+        evolutionAmount_.store(preset.evolutionAmount, std::memory_order_relaxed);
+        evolutionSpeed_.store(preset.evolutionSpeed, std::memory_order_relaxed);
+        reverbRoom_.store(preset.reverbRoom, std::memory_order_relaxed);
+        reverbDecay_.store(preset.reverbDecay, std::memory_order_relaxed);
+        masterVolume_.store(preset.masterVolume, std::memory_order_relaxed);
+        setTempo(preset.tempo);
+        requestMeter(preset.meterNumerator, preset.meterDenominator);
     }
 
     void resetVoicesToInitialState() {
@@ -876,7 +884,7 @@ public:
     }
 
     // Re-snaps Bass's pattern back to beat 1 without touching any knob or
-    // Scene state — a lightweight "resync the clock" independent of Reset.
+    // Preset state — a lightweight "resync the clock" independent of Reset.
     void requestPhaseReset() { pendingPhaseReset_.store(true, std::memory_order_relaxed); }
 
     int meterNumeratorDisplay() const { return meterNumeratorDisplay_.load(std::memory_order_relaxed); }
@@ -890,10 +898,10 @@ public:
             .getChildFile("MidiPresets")
             .getFullPathName()
             .toStdString()};
-    ScenePresetStore scenePresetStore_{
+    PresetStore presetStore_{
         juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
             .getChildFile("Jerrican")
-            .getChildFile("Scenes")
+            .getChildFile("Presets")
             .getFullPathName()
             .toStdString()};
     // Which preset each popup is "on" — persisted here (rather than in the
@@ -901,7 +909,7 @@ public:
     // reopens) so reopening after editing a loaded preset doesn't lose
     // track of which one to Override.
     juce::String currentMidiPresetName_;
-    juce::String currentSceneName_;
+    juce::String currentPresetName_;
 
 private:
     // Regenerates Bass's accent profile for the new meter, reseats

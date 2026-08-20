@@ -16,8 +16,8 @@
 #include "MeterTable.h"
 #include "MidiBindingManager.h"
 #include "MidiPresetStore.h"
-#include "ScenePresetStore.h"
-#include "SceneState.h"
+#include "PresetStore.h"
+#include "PresetState.h"
 #include "VoiceModel.h"
 
 // For StandalonePluginHolder::getInstance()/showAudioSettingsDialog() —
@@ -164,6 +164,21 @@ public:
             "VOLUME\n"
             "Master output level, applied after everything else. Full by "
             "default (unchanged output).\n\n"
+            "PRESETS\n"
+            "The Presets button opens a full-instrument-state library - "
+            "every voice's knobs and Evolution toggles, plus the global "
+            "Evolution/Reverb/Volume/Tempo/Meter controls, saved together "
+            "as one named snapshot (Host Sync is the one exception - see "
+            "below, it's session/hosting state, not part of the sound). "
+            "Save As names and stores the instrument's current state; "
+            "Override updates the currently-loaded preset in place; "
+            "Delete removes it. This is a different thing from Bindings "
+            "(below) - Presets capture what the instrument sounds like, "
+            "Bindings capture how your MIDI controller is wired to it; "
+            "loading a Preset never touches your MIDI mappings, and vice "
+            "versa. Jerrican ships with one factory preset already in "
+            "the library the first time you launch it, so there's always "
+            "somewhere to start from.\n\n"
             "OUTPUT / MIDI\n"
             "Audio device and MIDI input routing are handled outside this "
             "window: in Standalone, via Options > Audio/MIDI Settings; as "
@@ -180,7 +195,7 @@ public:
             "the beat grid re-snaps to the host's position on transport "
             "start or a loop jump - so a count-in before recording starts "
             "Jerrican's grain spawning, and Bass's walking pattern, on the "
-            "same downbeat. Off by default, and not part of Scenes.\n\n"
+            "same downbeat. Off by default, and not part of Presets.\n\n"
             "RECORDING (Standalone only)\n"
             "Record captures the exact final mix (everything, post-Reverb) "
             "to a timestamped WAV under ~/Music/Jerrican Recordings - click "
@@ -270,9 +285,9 @@ public:
         // has no such host, so it's the only place this earns its keep.
         recordButton.setVisible(processor_.wrapperType == juce::AudioProcessor::wrapperType_Standalone);
 
-        addAndMakeVisible(scenesButton);
-        scenesButton.setButtonText("Scenes");
-        scenesButton.onClick = [this] { showScenesPopup(); };
+        addAndMakeVisible(presetsButton);
+        presetsButton.setButtonText("Presets");
+        presetsButton.onClick = [this] { showPresetsPopup(); };
 
         addAndMakeVisible(bindingsButton);
         bindingsButton.setButtonText("Bindings");
@@ -343,7 +358,7 @@ public:
         meterTitleLabel.setJustificationType(juce::Justification::centred);
 
         // Doubles as a click target: resyncs the pattern back to beat 1
-        // without touching any knob or Scene state.
+        // without touching any knob or Preset state.
         addAndMakeVisible(beatPulseIndicator_);
         beatPulseIndicator_.onClick = [this] { processor_.requestPhaseReset(); };
 
@@ -438,12 +453,12 @@ public:
         titleLabel.setBounds(82, 16, 300, 34);
         subtitleLabel.setBounds(82, 48, getWidth() - 340, 22);
 
-        // Header cluster: Help (rightmost), Bindings, Scenes, Record,
+        // Header cluster: Help (rightmost), Bindings, Presets, Record,
         // Audio/MIDI (Standalone only) — no Output/MIDI In pickers here,
         // those are the host's/Standalone's job now.
         helpButton.setBounds(getWidth() - 64, 32, 24, 24);
         bindingsButton.setBounds(getWidth() - 152, 32, 80, 24);
-        scenesButton.setBounds(getWidth() - 240, 32, 70, 24);
+        presetsButton.setBounds(getWidth() - 240, 32, 70, 24);
         recordButton.setBounds(getWidth() - 330, 32, 80, 24);
         audioSettingsButton.setBounds(getWidth() - 450, 32, 110, 24);
         // Mutually exclusive with audioSettingsButton/recordButton
@@ -619,7 +634,7 @@ public:
 
     // Reflects the meter combo's selection onto whichever MeterTable::
     // kMeters entry matches (numerator, denominator) — used by both the
-    // 30Hz refresh (meter can change via MIDI) and Scene recall.
+    // 30Hz refresh (meter can change via MIDI) and Preset recall.
     void refreshMeterBoxSelection(int numerator, int denominator) {
         const int index = MeterTable::findMeterIndex(numerator, denominator);
         if (meterBox.getSelectedId() != index + 1) {
@@ -660,20 +675,20 @@ public:
                                                nullptr);
     }
 
-    void showScenesPopup() {
-        auto content = std::make_unique<ScenesPopup>(this);
-        content->setSize(400, 140);
-        juce::CallOutBox::launchAsynchronously(std::move(content), scenesButton.getScreenBounds(),
+    void showPresetsPopup() {
+        auto content = std::make_unique<PresetsPopup>(this);
+        content->setSize(400, 156);
+        juce::CallOutBox::launchAsynchronously(std::move(content), presetsButton.getScreenBounds(),
                                                nullptr);
     }
 
-    SceneState captureSceneState() const { return processor_.captureSceneState(); }
+    PresetState capturePresetState() const { return processor_.capturePresetState(); }
 
-    // Applies a Scene to the processor, then refreshes every Component
+    // Applies a Preset to the processor, then refreshes every Component
     // that reflects engine state — the processor itself never touches
     // juce::Component, so that part is this editor's job.
-    void applySceneState(const SceneState& scene) {
-        processor_.applySceneState(scene);
+    void applyPresetState(const PresetState& preset) {
+        processor_.applyPresetState(preset);
         for (auto& row : voiceRows_) {
             row->refreshFromModel();
             row->refreshEvolutionToggles();
@@ -683,8 +698,8 @@ public:
         refreshGlobalKnobFromAtomic(roomSlider, processor_.reverbRoom());
         refreshGlobalKnobFromAtomic(decaySlider, processor_.reverbDecay());
         refreshGlobalKnobFromAtomic(masterVolumeSlider, processor_.masterVolume());
-        tempoSlider.setValue(scene.tempo, juce::dontSendNotification);
-        refreshMeterBoxSelection(scene.meterNumerator, scene.meterDenominator);
+        tempoSlider.setValue(preset.tempo, juce::dontSendNotification);
+        refreshMeterBoxSelection(preset.meterNumerator, preset.meterDenominator);
         updateStatusSummary();
     }
 
@@ -2174,7 +2189,7 @@ private:
     };
 
     // Shared preset combo/Save-As/Delete/Override control, used by both
-    // ScenesPopup and MidiBindingsPopup so the two behave identically.
+    // PresetsPopup and MidiBindingsPopup so the two behave identically.
     class PresetControls : public juce::Component, private juce::Timer {
     public:
         struct Callbacks {
@@ -2187,6 +2202,13 @@ private:
             std::function<void()> onDeleted;
             std::function<juce::String()> getCurrentName;
             std::function<void(const juce::String&)> setCurrentName;
+            // Optional — unset (nullptr) means nothing is protected (the
+            // MIDI Bindings popup leaves this unset). When set and it
+            // returns true for the current name, Override and Delete are
+            // both disabled: a factory preset ships with the install, so
+            // the only way to keep your own tweak is Save As under a new
+            // name, never overwriting or removing the original.
+            std::function<bool(const std::string&)> isProtected;
         };
 
         static constexpr int kPreferredHeight = 22 + 6 + 22;
@@ -2306,13 +2328,15 @@ private:
                 deleteButton_.setEnabled(false);
             } else {
                 const bool matches = callbacks_.matchesNamed(currentName.toStdString());
-                overrideButton_.setVisible(!matches);
-                if (!matches) {
+                const bool protectedPreset =
+                    callbacks_.isProtected && callbacks_.isProtected(currentName.toStdString());
+                overrideButton_.setVisible(!matches && !protectedPreset);
+                if (!matches && !protectedPreset) {
                     overrideButton_.setButtonText("Override \"" + currentName + "\"");
                 }
                 revertButton_.setVisible(enableRevert_ && !matches);
                 saveAsButton_.setEnabled(true);
-                deleteButton_.setEnabled(true);
+                deleteButton_.setEnabled(!protectedPreset);
             }
 
             if (overrideButton_.isVisible() != wasOverrideVisible ||
@@ -2424,54 +2448,57 @@ private:
         juce::TextButton deleteButton_;
     };
 
-    // Scenes popup, opened from the "Scenes" button — a full state
+    // Presets popup, opened from the "Presets" button — a full state
     // snapshot (every voice's knobs/enabled/Evolution-toggle state, plus
     // the global Evolution/Reverb/Volume controls), distinct from MIDI
     // Learn's controller-mapping presets.
-    class ScenesPopup : public juce::Component {
+    class PresetsPopup : public juce::Component {
     public:
-        explicit ScenesPopup(JerricanAudioProcessorEditor* owner)
+        explicit PresetsPopup(JerricanAudioProcessorEditor* owner)
             : presetControls_(
-                  "Scene",
+                  "Preset",
                   PresetControls::Callbacks{
-                      .listNames = [owner] { return owner->processor_.scenePresetStore_.listPresetNames(); },
+                      .listNames = [owner] { return owner->processor_.presetStore_.listPresetNames(); },
                       .loadNamed =
                           [owner](const std::string& name) {
-                              SceneState scene;
-                              if (!owner->processor_.scenePresetStore_.load(name, scene)) {
+                              PresetState preset;
+                              if (!owner->processor_.presetStore_.load(name, preset)) {
                                   return false;
                               }
-                              owner->applySceneState(scene);
+                              owner->applyPresetState(preset);
                               return true;
                           },
                       .saveNamed =
                           [owner](const std::string& name) {
-                              return owner->processor_.scenePresetStore_.save(name, owner->captureSceneState());
+                              return owner->processor_.presetStore_.save(name, owner->capturePresetState());
                           },
                       .removeNamed = [owner](const std::string& name) {
-                          return owner->processor_.scenePresetStore_.remove(name);
+                          return owner->processor_.presetStore_.remove(name);
                       },
                       .matchesNamed =
                           [owner](const std::string& name) {
-                              SceneState scene;
-                              return owner->processor_.scenePresetStore_.load(name, scene) &&
-                                     scene == owner->captureSceneState();
+                              PresetState preset;
+                              return owner->processor_.presetStore_.load(name, preset) &&
+                                     preset == owner->capturePresetState();
                           },
-                      // A Scene is always a complete, meaningful snapshot
+                      // A Preset is always a complete, meaningful snapshot
                       // — there's no "nothing to save" state.
                       .hasMeaningfulContent = [] { return true; },
                       .onDeleted = [owner] { owner->handleResetPressed(); },
-                      .getCurrentName = [owner] { return owner->processor_.currentSceneName_; },
+                      .getCurrentName = [owner] { return owner->processor_.currentPresetName_; },
                       .setCurrentName = [owner](const juce::String& name) {
-                          owner->processor_.currentSceneName_ = name;
+                          owner->processor_.currentPresetName_ = name;
                       },
+                      .isProtected = [](const std::string& name) { return isFactoryPresetName(name); },
                   },
                   /*enableRevert=*/true) {
             addAndMakeVisible(presetControls_);
 
             addAndMakeVisible(hintLabel_);
-            hintLabel_.setText("Captures every knob/toggle. Transport state isn't included.",
-                               juce::dontSendNotification);
+            hintLabel_.setText(
+                "Captures every knob/toggle. Transport state isn't included. Factory "
+                "presets can't be overridden or deleted - Save As to keep your own version.",
+                juce::dontSendNotification);
             hintLabel_.setFont(juce::Font(juce::FontOptions(11.0f)));
             hintLabel_.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
             hintLabel_.setJustificationType(juce::Justification::topLeft);
@@ -2483,7 +2510,7 @@ private:
 
             presetControls_.setBounds(padding, padding, contentWidth, PresetControls::kPreferredHeight);
             hintLabel_.setBounds(padding, padding + PresetControls::kPreferredHeight + 10, contentWidth,
-                                 40);
+                                 56);
         }
 
     private:
@@ -2656,9 +2683,9 @@ private:
                 case MidiTarget::VoiceSustain: return "Sustain (Bass / Keys)";
                 case MidiTarget::VoiceAttack: return "Attack (Bass) / Fuzz (Haze) / Voicing (Keys)";
                 // Raw CC value maps directly to cleanliness_ (0=dirty..
-                // 1=clean) here, same as the Scene field — the inverted
+                // 1=clean) here, same as the Preset field — the inverted
                 // "Dirt" display/drag direction is a per-voice-card UI
-                // convenience only, not part of the MIDI/Scene contract.
+                // convenience only, not part of the MIDI/Preset contract.
                 case MidiTarget::VoiceCleanliness: return "Dirt (Ambient / Keys, inverted)";
                 case MidiTarget::VoiceEnabledToggle: return "Enabled toggle";
                 case MidiTarget::VoicePitchRangeEvoToggle: return "Evolve: Pitch Range";
@@ -2842,7 +2869,7 @@ private:
     juce::TextButton audioSettingsButton;
     juce::TextButton hostSyncButton;
     juce::TextButton recordButton;
-    juce::TextButton scenesButton;
+    juce::TextButton presetsButton;
     juce::TextButton bindingsButton;
     juce::Label statusLabel;
     juce::TextButton openRecordingFolderButton;

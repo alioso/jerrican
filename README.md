@@ -78,8 +78,8 @@ never plays the same way twice.
 - Effects chain: Reverb (Room/Decay), Master Volume
 - A voice-bank UI exposing all of the above per voice, plus a transport
   row (Play / Stop / Reset / Randomize) and an in-app Help popup
-- Full MIDI Learn (`MidiBindingManager`/`MidiPresetStore`) and Scenes
-  (`ScenePresetStore`/`SceneState`, full-instrument-state snapshots) —
+- Full MIDI Learn (`MidiBindingManager`/`MidiPresetStore`) and Presets
+  (`PresetStore`/`PresetState`, full-instrument-state snapshots) —
   per-voice targets apply to whichever voice is currently focused
   (Voice Select pads); Transport is bindable too, as a global action
 - Audio export: a Record button (Standalone only — a hosted AU/VST3
@@ -97,8 +97,8 @@ never plays the same way twice.
 - [CMakeLists.txt](CMakeLists.txt) — CMake entrypoint for the app and all test targets
 - [JUCE/](JUCE/) — vendored JUCE framework (git submodule)
 - [Sources/JerricanApp/Main.cpp](Sources/JerricanApp/Main.cpp) — plugin factory entrypoint
-- [Sources/JerricanApp/JerricanProcessor.h](Sources/JerricanApp/JerricanProcessor.h) — audio/MIDI processing, transport, Host Sync, Scene capture/apply
-- [Sources/JerricanApp/JerricanEditor.h](Sources/JerricanApp/JerricanEditor.h) — the voice-bank UI, Help/Bindings/Scenes popups
+- [Sources/JerricanApp/JerricanProcessor.h](Sources/JerricanApp/JerricanProcessor.h) — audio/MIDI processing, transport, Host Sync, Preset capture/apply
+- [Sources/JerricanApp/JerricanEditor.h](Sources/JerricanApp/JerricanEditor.h) — the voice-bank UI, Help/Bindings/Presets popups
 - [Sources/JerricanApp/VoiceModel.h](Sources/JerricanApp/VoiceModel.h) — per-voice generative macro state
 - [Sources/JerricanApp/VoiceOscillator.h](Sources/JerricanApp/VoiceOscillator.h) — Sine/Saw/FM/Noise waveform generator
 - [Sources/JerricanApp/Grain.h](Sources/JerricanApp/Grain.h) — a single enveloped, panned grain
@@ -109,7 +109,7 @@ never plays the same way twice.
 - [Sources/JerricanApp/PatternClock.h](Sources/JerricanApp/PatternClock.h) / [MeterTable.h](Sources/JerricanApp/MeterTable.h) — the shared Tempo/Meter grid Bass and Keys are locked to
 - [Sources/JerricanApp/EvolutionEngine.h](Sources/JerricanApp/EvolutionEngine.h) — per-voice autonomous macro drift
 - [Sources/JerricanApp/MidiBindingManager.h](Sources/JerricanApp/MidiBindingManager.h) / [MidiPresetStore.h](Sources/JerricanApp/MidiPresetStore.h) — MIDI Learn and its named presets
-- [Sources/JerricanApp/SceneState.h](Sources/JerricanApp/SceneState.h) / [ScenePresetStore.h](Sources/JerricanApp/ScenePresetStore.h) — full-state Scene snapshots
+- [Sources/JerricanApp/PresetState.h](Sources/JerricanApp/PresetState.h) / [PresetStore.h](Sources/JerricanApp/PresetStore.h) — full-state Preset snapshots
 - [Sources/JerricanApp/AudioRecorder.h](Sources/JerricanApp/AudioRecorder.h) — background-threaded WAV export of the final mix
 - [Sources/JerricanApp/FastRandom.h](Sources/JerricanApp/FastRandom.h) — shared lightweight RNG
 - [Tests/](Tests/) — headless regression tests, one per JUCE-free engine class
@@ -153,7 +153,7 @@ dist/VST3/Jerrican.vst3
 
 Jerrican's proven, domain-generic infrastructure — the CMake/JUCE setup,
 native window chrome, the atomic UI-thread/audio-thread pattern, the
-Evolution drift mechanic, and the entire MIDI Learn + Scenes preset
+Evolution drift mechanic, and the entire MIDI Learn + Presets preset
 system — was ported to build Marmite, its generative drum-machine
 sibling, applying the same self-composing philosophy to rhythm instead
 of pitched granular texture.

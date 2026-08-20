@@ -45,7 +45,7 @@ public:
     const std::string& getName() const { return name_; }
     bool isEnabled() const { return enabled_.load(std::memory_order_relaxed); }
     // Transient mixer-strip state, deliberately not a constructor param and
-    // not touched by resetVoicesToInitialState()/Randomize/SceneState —
+    // not touched by resetVoicesToInitialState()/Randomize/PresetState —
     // matches Marmite's DrumVoiceModel::soloed_ precedent exactly.
     bool isSoloed() const { return soloed_.load(std::memory_order_relaxed); }
     float getVolume() const { return volume_.load(std::memory_order_relaxed); }
