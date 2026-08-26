@@ -593,8 +593,15 @@ public:
                     // reasoning as Bass), wide/spread voicings are more
                     // decorrelated and can use gentler normalization —
                     // reusing the parameter rather than adding a new one.
+                    // Same 1.7x headroom boost as Bass, for the same
+                    // reason: Keys is a metered burst of activity, not a
+                    // continuously-overlapping texture like Ambient/Haze,
+                    // so at max Volume it was reading as quieter than the
+                    // rest of the voices even with 3-4 grains firing per
+                    // chord — this aligns it with Bass rather than leaving
+                    // it at the un-boosted default.
                     voiceSample = cloud.renderActiveGrainsCorrelated(voice.getVolume(),
-                                                                      voice.getWander());
+                                                                      voice.getWander(), 1.7f);
                 }
                 if (voiceIsAudible) {
                     mixedLeft += voiceSample.left;

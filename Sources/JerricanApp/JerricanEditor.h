@@ -383,6 +383,10 @@ public:
 
         setUpTransportKnob(tempoSlider, tempoLabel, "Tempo");
         tempoSlider.setRange(40.0, 240.0);
+        // Whole BPM only — the shared knob setup defaults to 2 decimal
+        // places for its usual 0..1 Evolution knobs, which read as
+        // meaningless precision ("110.00") on a tempo dial.
+        tempoSlider.setNumDecimalPlacesToDisplay(0);
         tempoSlider.setValue(processor_.tempo().load(std::memory_order_relaxed));
 
         addAndMakeVisible(statusLabel);
@@ -2359,7 +2363,7 @@ private:
                     if (result != 1 || safeThis == nullptr) {
                         return;
                     }
-                    const auto name = window->getTextEditorContents("name");
+                    const auto name = window->getTextEditorContents("name").trim();
                     if (name.isEmpty()) {
                         return;
                     }
@@ -2479,7 +2483,7 @@ private:
                           [owner](const std::string& name) {
                               PresetState preset;
                               return owner->processor_.presetStore_.load(name, preset) &&
-                                     preset == owner->capturePresetState();
+                                     matchesIgnoringEvolutionDrift(preset, owner->capturePresetState());
                           },
                       // A Preset is always a complete, meaningful snapshot
                       // — there's no "nothing to save" state.

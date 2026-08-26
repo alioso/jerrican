@@ -99,3 +99,57 @@ inline bool operator==(const PresetState& a, const PresetState& b) {
            nearlyEqual(a.masterVolume, b.masterVolume) && nearlyEqual(a.tempo, b.tempo) &&
            a.meterNumerator == b.meterNumerator && a.meterDenominator == b.meterDenominator;
 }
+
+// Like operator==, but this is what the Presets popup actually uses to
+// decide whether to show Override — a saved preset with Evolution Amount
+// > 0 keeps drifting its own macros forever by design (that's the whole
+// point of Evolution), so a bit-exact compare would show Override within
+// moments of loading the very preset it's comparing against, permanently.
+// A macro only counts as diverged if either Evolution isn't currently
+// driving it (evolutionAmount is 0) or its own EvoEnabled toggle is off
+// (pinned under manual control) — genuinely changing a pinned macro, or
+// any of the non-drifting fields below, still shows Override as before.
+inline bool matchesIgnoringEvolutionDrift(const PresetState& saved, const PresetState& live) {
+    using PresetStateDetail::nearlyEqual;
+    const bool evolving = live.evolutionAmount > 0.0f;
+    auto valueMatches = [evolving](bool evoEnabled, float a, float b) {
+        return (evolving && evoEnabled) || nearlyEqual(a, b);
+    };
+    for (std::size_t i = 0; i < saved.voices.size(); ++i) {
+        const auto& a = saved.voices[i];
+        const auto& b = live.voices[i];
+        if (a.enabled != b.enabled || a.rootSemitoneOffset != b.rootSemitoneOffset) {
+            return false;
+        }
+        if (a.volumeEvoEnabled != b.volumeEvoEnabled ||
+            a.pitchRangeEvoEnabled != b.pitchRangeEvoEnabled ||
+            a.timbreEvoEnabled != b.timbreEvoEnabled || a.motionEvoEnabled != b.motionEvoEnabled ||
+            a.complexityEvoEnabled != b.complexityEvoEnabled ||
+            a.dissonanceEvoEnabled != b.dissonanceEvoEnabled ||
+            a.busyEvoEnabled != b.busyEvoEnabled || a.sustainEvoEnabled != b.sustainEvoEnabled ||
+            a.cleanlinessEvoEnabled != b.cleanlinessEvoEnabled ||
+            a.attackEvoEnabled != b.attackEvoEnabled) {
+            return false;
+        }
+        if (!valueMatches(a.volumeEvoEnabled, a.volume, b.volume) ||
+            !valueMatches(a.pitchRangeEvoEnabled, a.pitchLow, b.pitchLow) ||
+            !valueMatches(a.pitchRangeEvoEnabled, a.pitchHigh, b.pitchHigh) ||
+            !valueMatches(a.timbreEvoEnabled, a.timbre, b.timbre) ||
+            !valueMatches(a.motionEvoEnabled, a.motion, b.motion) ||
+            !valueMatches(a.complexityEvoEnabled, a.complexity, b.complexity) ||
+            !valueMatches(a.dissonanceEvoEnabled, a.dissonance, b.dissonance) ||
+            !valueMatches(a.busyEvoEnabled, a.busy, b.busy) ||
+            !valueMatches(a.sustainEvoEnabled, a.sustain, b.sustain) ||
+            !valueMatches(a.cleanlinessEvoEnabled, a.cleanliness, b.cleanliness) ||
+            !valueMatches(a.attackEvoEnabled, a.attack, b.attack)) {
+            return false;
+        }
+    }
+    return nearlyEqual(saved.evolutionAmount, live.evolutionAmount) &&
+           nearlyEqual(saved.evolutionSpeed, live.evolutionSpeed) &&
+           nearlyEqual(saved.reverbRoom, live.reverbRoom) &&
+           nearlyEqual(saved.reverbDecay, live.reverbDecay) &&
+           nearlyEqual(saved.masterVolume, live.masterVolume) &&
+           nearlyEqual(saved.tempo, live.tempo) && saved.meterNumerator == live.meterNumerator &&
+           saved.meterDenominator == live.meterDenominator;
+}
