@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include <algorithm>
 #include <array>
 #include <optional>
 
@@ -609,10 +610,18 @@ public:
                 }
             }
 
+            // Each voice clamps its own output to [-1, 1], but up to 4 of
+            // them are summed together above — worst case (several loud
+            // voices peaking at once) that sum can reach +/-4 before this
+            // point, and headroom alone doesn't guarantee pulling it back
+            // under 1 again. Never write an out-of-range sample to the
+            // output buffer: different audio backends handle that
+            // differently (some tolerate it, some produce harsh digital
+            // distortion), so this needs to be a hard clamp, not a hope.
             constexpr float headroom = 0.5f;
-            left[sample] = mixedLeft * headroom * masterVolume;
+            left[sample] = std::max(-1.0f, std::min(1.0f, mixedLeft * headroom * masterVolume));
             if (right != nullptr) {
-                right[sample] = mixedRight * headroom * masterVolume;
+                right[sample] = std::max(-1.0f, std::min(1.0f, mixedRight * headroom * masterVolume));
             }
         }
 
