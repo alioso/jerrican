@@ -106,7 +106,24 @@ public:
           2000.0f, 5000.0f, Grain::Character::Ambient}}};
 
     JerricanAudioProcessor()
-        : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo())),
+        : AudioProcessor(
+              // Main carries the full mix (headroom, Reverb, Master
+              // Volume, Recording — everything, exactly as before this
+              // was ever multi-bus) and is active by default, so
+              // Standalone and any host that doesn't care about extra
+              // buses behaves identically to a single-output plugin.
+              // The four per-voice buses are additional, inactive by
+              // default, and exist purely so a DAW's own mixer can route
+              // a voice to its own track without losing the shared
+              // clock/Evolution coupling that loading four separate
+              // instances would (see processBlock). Order matches
+              // kInitialVoices/voices_ (Bass, Ambient, Keys, Haze).
+              BusesProperties()
+                  .withOutput("Main", juce::AudioChannelSet::stereo(), true)
+                  .withOutput("Bass", juce::AudioChannelSet::stereo(), false)
+                  .withOutput("Ambient", juce::AudioChannelSet::stereo(), false)
+                  .withOutput("Keys", juce::AudioChannelSet::stereo(), false)
+                  .withOutput("Haze", juce::AudioChannelSet::stereo(), false)),
           voices_{VoiceModel(kInitialVoices[0].name, kInitialVoices[0].enabled,
                               kInitialVoices[0].volume, kInitialVoices[0].pitchLow,
                               kInitialVoices[0].pitchHigh, kInitialVoices[0].timbre,
@@ -188,8 +205,21 @@ public:
     bool hasEditor() const override { return true; }
     juce::AudioProcessorEditor* createEditor() override;
 
+    // Main must stay stereo and active; each of the four per-voice buses
+    // can independently be stereo or disabled (a host that doesn't
+    // support/want them just leaves them disabled, which is also today's
+    // only configuration for a host that predates this multi-bus change).
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override {
-        return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+        if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo()) {
+            return false;
+        }
+        for (int i = 1; i < layouts.outputBuses.size(); ++i) {
+            const auto& bus = layouts.outputBuses.getReference(i);
+            if (!bus.isDisabled() && bus != juce::AudioChannelSet::stereo()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     void prepareToPlay(double sampleRate, int /*samplesPerBlock*/) override {
@@ -474,6 +504,22 @@ public:
             anySoloed = anySoloed || voice.isSoloed();
         }
 
+        // Per-voice output buses (see the constructor) — inactive/
+        // disconnected in most hosts, in which case getBusBuffer returns
+        // a buffer with no channels; left/right stay null and the write
+        // below is skipped. Fetched once per block, not per sample.
+        std::array<float*, 4> voiceBusLeft{};
+        std::array<float*, 4> voiceBusRight{};
+        std::array<juce::AudioBuffer<float>, 4> voiceBuses{
+            getBusBuffer(buffer, false, 1), getBusBuffer(buffer, false, 2),
+            getBusBuffer(buffer, false, 3), getBusBuffer(buffer, false, 4)};
+        for (size_t i = 0; i < voiceBuses.size(); ++i) {
+            if (voiceBuses[i].getNumChannels() >= 2) {
+                voiceBusLeft[i] = voiceBuses[i].getWritePointer(0);
+                voiceBusRight[i] = voiceBuses[i].getWritePointer(1);
+            }
+        }
+
         for (int sample = 0; sample < numSamples; ++sample) {
             const bool onGridBoundary = playing && patternClock_.tick();
             if (onGridBoundary) {
@@ -603,6 +649,15 @@ public:
                     // it at the un-boosted default.
                     voiceSample = cloud.renderActiveGrainsCorrelated(voice.getVolume(),
                                                                       voice.getWander(), 1.7f);
+                }
+                // Dry per-voice tap for that voice's own output bus — a
+                // deliberate isolated stem, so it stays unaffected by
+                // another voice's Solo (unlike the Main-bus mix below) and
+                // carries no headroom/Reverb/Master Volume, all of which
+                // are mix-bus corrections a routed-out track doesn't need.
+                if (voiceBusLeft[i] != nullptr) {
+                    voiceBusLeft[i][sample] = std::max(-1.0f, std::min(1.0f, voiceSample.left));
+                    voiceBusRight[i][sample] = std::max(-1.0f, std::min(1.0f, voiceSample.right));
                 }
                 if (voiceIsAudible) {
                     mixedLeft += voiceSample.left;
