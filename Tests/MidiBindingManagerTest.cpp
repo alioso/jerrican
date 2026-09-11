@@ -94,7 +94,7 @@ int main() {
 
     // Target count sanity check: 13 per-voice + 4 voice-select +
     // 4 transport + 5 global = 26.
-    { assert(kAllMidiTargets.size() == 36); }
+    { assert(kAllMidiTargets.size() == 37); }
 
     // Name <-> target round-trip, used by preset (de)serialization.
     {

@@ -57,6 +57,12 @@ struct PresetState {
     float tempo = 120.0f;
     int meterNumerator = 4;
     int meterDenominator = 4;
+    // Index into ModeTable::kModes — see HarmonicScale.h. 0 (Pentatonic)
+    // is the original hardcoded scale every voice used before Mode
+    // existed, so any preset saved before this field existed (or that
+    // simply omits it) defaults here and reproduces the exact same
+    // sound with no migration needed.
+    int mode = 0;
 };
 
 namespace PresetStateDetail {
@@ -97,7 +103,8 @@ inline bool operator==(const PresetState& a, const PresetState& b) {
            nearlyEqual(a.evolutionSpeed, b.evolutionSpeed) &&
            nearlyEqual(a.reverbRoom, b.reverbRoom) && nearlyEqual(a.reverbDecay, b.reverbDecay) &&
            nearlyEqual(a.masterVolume, b.masterVolume) && nearlyEqual(a.tempo, b.tempo) &&
-           a.meterNumerator == b.meterNumerator && a.meterDenominator == b.meterDenominator;
+           a.meterNumerator == b.meterNumerator && a.meterDenominator == b.meterDenominator &&
+           a.mode == b.mode;
 }
 
 // Like operator==, but this is what the Presets popup actually uses to
@@ -151,5 +158,5 @@ inline bool matchesIgnoringEvolutionDrift(const PresetState& saved, const Preset
            nearlyEqual(saved.reverbDecay, live.reverbDecay) &&
            nearlyEqual(saved.masterVolume, live.masterVolume) &&
            nearlyEqual(saved.tempo, live.tempo) && saved.meterNumerator == live.meterNumerator &&
-           saved.meterDenominator == live.meterDenominator;
+           saved.meterDenominator == live.meterDenominator && saved.mode == live.mode;
 }

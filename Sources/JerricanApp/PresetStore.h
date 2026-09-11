@@ -111,6 +111,7 @@ public:
         file << "global.tempo=" << state.tempo << "\n";
         file << "global.meterNumerator=" << state.meterNumerator << "\n";
         file << "global.meterDenominator=" << state.meterDenominator << "\n";
+        file << "global.mode=" << state.mode << "\n";
         return file.str();
     }
 
@@ -205,6 +206,7 @@ private:
             else if (field == "tempo") state.tempo = value;
             else if (field == "meterNumerator") state.meterNumerator = static_cast<int>(value);
             else if (field == "meterDenominator") state.meterDenominator = static_cast<int>(value);
+            else if (field == "mode") state.mode = static_cast<int>(value);
             return;
         }
 

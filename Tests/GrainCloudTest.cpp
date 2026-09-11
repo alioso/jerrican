@@ -2,10 +2,14 @@
 #include <iostream>
 
 #include "GrainCloud.h"
+#include "HarmonicScale.h"
 
 namespace {
 
 constexpr double kSampleRate = 44100.0;
+const HarmonicScale kScale;  // default mode (Pentatonic) — matches the
+                              // scale these tests were originally written
+                              // against, before it became selectable.
 
 // The old generic continuous-stochastic renderSample()/maybeSpawnGrain()
 // path was removed once every voice got a bespoke spawn method — these
@@ -18,7 +22,7 @@ constexpr double kSampleRate = 44100.0;
 Grain::StereoSample render(GrainCloud& cloud, float pitchLow, float pitchHigh, float texture,
                            float drift, float complexity, float volume, bool active,
                            float dissonance = 1.0f) {
-    return cloud.renderHazeSample(pitchLow, pitchHigh, texture, drift, complexity, volume,
+    return cloud.renderHazeSample(kScale, pitchLow, pitchHigh, texture, drift, complexity, volume,
                                   dissonance, 0.0f, active);
 }
 

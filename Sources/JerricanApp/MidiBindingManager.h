@@ -63,7 +63,7 @@ enum class MidiTarget {
     TransportStop,
     TransportReset,
     TransportRandomize,
-    // Global (7).
+    // Global (8).
     EvolutionAmount,
     EvolutionSpeed,
     ReverbRoom,
@@ -71,9 +71,10 @@ enum class MidiTarget {
     MasterVolume,
     Tempo,
     Meter,
+    Mode,
 };
 
-inline constexpr std::array<MidiTarget, 36> kAllMidiTargets{
+inline constexpr std::array<MidiTarget, 37> kAllMidiTargets{
     MidiTarget::VoicePitchCenter,
     MidiTarget::VoiceVolume,
     MidiTarget::VoiceTimbre,
@@ -110,6 +111,7 @@ inline constexpr std::array<MidiTarget, 36> kAllMidiTargets{
     MidiTarget::MasterVolume,
     MidiTarget::Tempo,
     MidiTarget::Meter,
+    MidiTarget::Mode,
 };
 
 // Single source of truth for target <-> name, used by the bindings popup
@@ -152,6 +154,7 @@ inline const char* midiTargetName(MidiTarget target) {
         case MidiTarget::MasterVolume: return "MasterVolume";
         case MidiTarget::Tempo: return "Tempo";
         case MidiTarget::Meter: return "Meter";
+        case MidiTarget::Mode: return "Mode";
     }
     return "";
 }

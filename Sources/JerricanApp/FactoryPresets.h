@@ -113,7 +113,8 @@ inline std::vector<std::pair<std::string, std::string>> factoryPresets() {
          "global.masterVolume=1\n"
          "global.tempo=120\n"
          "global.meterNumerator=4\n"
-         "global.meterDenominator=4\n"},
+         "global.meterDenominator=4\n"
+         "global.mode=0\n"},
         {"Mid-Town",
          "voice0.enabled=1\n"
          "voice0.volume=0.429715\n"
@@ -214,7 +215,8 @@ inline std::vector<std::pair<std::string, std::string>> factoryPresets() {
          "global.masterVolume=1\n"
          "global.tempo=110\n"
          "global.meterNumerator=4\n"
-         "global.meterDenominator=4\n"},
+         "global.meterDenominator=4\n"
+         "global.mode=0\n"},
         {"Unsettled",
          "voice0.enabled=1\n"
          "voice0.volume=0.890507\n"
@@ -315,7 +317,8 @@ inline std::vector<std::pair<std::string, std::string>> factoryPresets() {
          "global.masterVolume=1\n"
          "global.tempo=110\n"
          "global.meterNumerator=4\n"
-         "global.meterDenominator=4\n"},
+         "global.meterDenominator=4\n"
+         "global.mode=0\n"},
     };
 }
 

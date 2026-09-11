@@ -14,6 +14,7 @@
 #include "JerricanProcessor.h"
 #include "JerricanTheme.h"
 #include "MeterTable.h"
+#include "ModeTable.h"
 #include "MidiBindingManager.h"
 #include "MidiPresetStore.h"
 #include "PresetStore.h"
@@ -70,6 +71,20 @@ public:
             "a click target - click it to resync the pattern back to beat "
             "1 without touching any knob. As an AU/VST3 plugin, enabling "
             "Host Sync locks Tempo to your DAW's transport (see below).\n\n"
+            "MODE\n"
+            "The global scale every voice's Dissonance quantizes toward, "
+            "and Keys' chords are built from - Pentatonic (the default) "
+            "plus about 20 others: the seven Western church modes, "
+            "harmonic/melodic minor, Hungarian, Middle Eastern, Japanese, "
+            "and a few more. Mode sets the shape (which intervals are "
+            "\"in key\"); each voice's own Key still sets where that shape "
+            "is rooted - the two are independent, same as \"D Dorian\" vs "
+            "\"G Dorian\" being the same mode at a different root. Modes "
+            "named after a specific tradition (Hungarian, Middle Eastern, "
+            "Japanese, etc.) are 12-tone-equal-temperament approximations, "
+            "not a claim of exact traditional tuning - several of those "
+            "traditions use microtonal intervals 12-TET can only "
+            "approximate.\n\n"
             "PER-VOICE CONTROLS (Volume, Pitch Range, Dissonance, Key)\n"
             "These four are universal and mean the same thing on every "
             "voice. Enabled - mutes/unmutes the voice. Solo - the blue 'S' "
@@ -381,6 +396,24 @@ public:
             }
         };
 
+        addAndMakeVisible(modeLabel);
+        modeLabel.setText("Mode", juce::dontSendNotification);
+        modeLabel.setFont(juce::Font(juce::FontOptions(12.0f)));
+        modeLabel.setColour(juce::Label::textColourId, JerricanTheme::textSecondary);
+        modeLabel.setJustificationType(juce::Justification::centred);
+
+        addAndMakeVisible(modeBox);
+        for (int i = 0; i < static_cast<int>(ModeTable::kModes.size()); ++i) {
+            modeBox.addItem(ModeTable::kModes[static_cast<std::size_t>(i)].label, i + 1);
+        }
+        modeBox.setSelectedId(1, juce::dontSendNotification);
+        modeBox.onChange = [this] {
+            const int index = modeBox.getSelectedId() - 1;
+            if (index >= 0 && index < static_cast<int>(ModeTable::kModes.size())) {
+                processor_.requestMode(index);
+            }
+        };
+
         setUpTransportKnob(tempoSlider, tempoLabel, "Tempo");
         tempoSlider.setRange(40.0, 240.0);
         // Whole BPM only — the shared knob setup defaults to 2 decimal
@@ -429,6 +462,7 @@ public:
             row->refreshEvolutionToggles();
         }
         refreshMeterBoxSelection(processor_.meterNumeratorDisplay(), processor_.meterDenominatorDisplay());
+        refreshModeBoxSelection(processor_.modeDisplay());
         beatPulseIndicator_.refresh(processor_.meterNumeratorDisplay(),
                                     processor_.meterDenominatorDisplay(),
                                     processor_.currentSlot16Display());
@@ -551,16 +585,19 @@ public:
         masterVolumeSlider.setBounds(volumeBlockX + (volumeBlockWidth - knobSize) / 2, knobBoxTop,
                                      knobSize, knobSize + knobTextBoxHeight);
 
-        // Meter/Tempo block: same title-over-knobs shape, placed
-        // immediately to Master Volume's right — Meter combo + beat
-        // counter share one column, Tempo gets its own.
+        // Meter/Mode/Tempo block: same title-over-knobs shape, placed
+        // immediately to Master Volume's right — Meter combo, Mode combo,
+        // and beat counter share one column each.
         const int meterBlockX = volumeBlockX + volumeBlockWidth + 30;
-        const int meterBlockWidth = knobColumnWidth * 2;
+        const int meterBlockWidth = knobColumnWidth * 3;
 
         meterTitleLabel.setBounds(meterBlockX, evolutionTitleTop, meterBlockWidth, evolutionTitleHeight);
         meterLabel.setBounds(meterBlockX, knobLabelTop, knobColumnWidth, knobLabelHeight);
         meterBox.setBounds(meterBlockX + 6, knobBoxTop + (knobSize - 24) / 2, knobColumnWidth - 12, 24);
-        const int beatClockColumnX = meterBlockX + knobColumnWidth;
+        const int modeColumnX = meterBlockX + knobColumnWidth;
+        modeLabel.setBounds(modeColumnX, knobLabelTop, knobColumnWidth, knobLabelHeight);
+        modeBox.setBounds(modeColumnX + 6, knobBoxTop + (knobSize - 24) / 2, knobColumnWidth - 12, 24);
+        const int beatClockColumnX = modeColumnX + knobColumnWidth;
         beatPulseIndicator_.setBounds(beatClockColumnX + (knobColumnWidth - knobSize) / 2, knobBoxTop,
                                       knobSize, knobSize);
 
@@ -646,6 +683,14 @@ public:
         }
     }
 
+    // Same idiom as refreshMeterBoxSelection — used by both the 30Hz
+    // refresh (Mode can change via MIDI) and Preset recall.
+    void refreshModeBoxSelection(int modeIndex) {
+        if (modeBox.getSelectedId() != modeIndex + 1) {
+            modeBox.setSelectedId(modeIndex + 1, juce::dontSendNotification);
+        }
+    }
+
     void showHelpPopup() {
         auto content = std::make_unique<HelpContent>();
         content->setSize(480, 620);
@@ -704,6 +749,7 @@ public:
         refreshGlobalKnobFromAtomic(masterVolumeSlider, processor_.masterVolume());
         tempoSlider.setValue(preset.tempo, juce::dontSendNotification);
         refreshMeterBoxSelection(preset.meterNumerator, preset.meterDenominator);
+        refreshModeBoxSelection(preset.mode);
         updateStatusSummary();
     }
 
@@ -2717,6 +2763,7 @@ private:
                 case MidiTarget::MasterVolume: return "Master Volume";
                 case MidiTarget::Tempo: return "Tempo";
                 case MidiTarget::Meter: return "Meter";
+                case MidiTarget::Mode: return "Mode";
             }
             return "";
         }
@@ -2834,6 +2881,7 @@ private:
                                  juce::dontSendNotification);
         }
         refreshMeterBoxSelection(processor_.meterNumeratorDisplay(), processor_.meterDenominatorDisplay());
+        refreshModeBoxSelection(processor_.modeDisplay());
         beatPulseIndicator_.refresh(processor_.meterNumeratorDisplay(),
                                     processor_.meterDenominatorDisplay(),
                                     processor_.currentSlot16Display());
@@ -2897,6 +2945,8 @@ private:
     juce::Label meterTitleLabel;
     juce::Label meterLabel;
     juce::ComboBox meterBox;
+    juce::Label modeLabel;
+    juce::ComboBox modeBox;
     BeatPulseIndicator beatPulseIndicator_;
     juce::Label tempoLabel;
     juce::Slider tempoSlider;

@@ -92,14 +92,15 @@ public:
     // Ambient's own density floor (see maybeSpawnAmbientGrain) would
     // otherwise keep spawning new grains forever even while stopped, or
     // before Play was ever pressed.
-    Grain::StereoSample renderAmbientSample(float pitchRangeLow, float pitchRangeHigh,
-                                             float material, float speed, float complexity,
-                                             float volume, float dissonance, float cleanliness,
-                                             bool active, int rootSemitoneOffset = 0) {
+    Grain::StereoSample renderAmbientSample(const HarmonicScale& scale, float pitchRangeLow,
+                                             float pitchRangeHigh, float material, float speed,
+                                             float complexity, float volume, float dissonance,
+                                             float cleanliness, bool active,
+                                             int rootSemitoneOffset = 0) {
         updateDrift(pitchRangeLow, pitchRangeHigh, speed);
         if (active) {
-            maybeSpawnAmbientGrain(pitchRangeLow, pitchRangeHigh, material, speed, complexity,
-                                   dissonance, cleanliness, rootSemitoneOffset);
+            maybeSpawnAmbientGrain(scale, pitchRangeLow, pitchRangeHigh, material, speed,
+                                   complexity, dissonance, cleanliness, rootSemitoneOffset);
         }
         return renderActiveGrainsCorrelated(volume, kAmbientCorrelationWander);
     }
@@ -110,13 +111,13 @@ public:
     // duration scaling inside maybeSpawnHazeGrain — see there. `active`
     // gates new-grain spawning the same way Ambient's does, separate from
     // Layers' density floor, for the same stop/start reason.
-    Grain::StereoSample renderHazeSample(float pitchRangeLow, float pitchRangeHigh, float texture,
-                                          float drift, float complexity, float volume,
-                                          float dissonance, float fuzz, bool active,
-                                          int rootSemitoneOffset = 0) {
+    Grain::StereoSample renderHazeSample(const HarmonicScale& scale, float pitchRangeLow,
+                                          float pitchRangeHigh, float texture, float drift,
+                                          float complexity, float volume, float dissonance,
+                                          float fuzz, bool active, int rootSemitoneOffset = 0) {
         updateDrift(pitchRangeLow, pitchRangeHigh, drift);
         if (active) {
-            maybeSpawnHazeGrain(pitchRangeLow, pitchRangeHigh, texture, drift, complexity,
+            maybeSpawnHazeGrain(scale, pitchRangeLow, pitchRangeHigh, texture, drift, complexity,
                                 dissonance, fuzz, rootSemitoneOffset);
         }
         // renderActiveGrainsCorrelated with wander pinned to 1.0 — NOT
@@ -155,8 +156,9 @@ public:
     // kept close to center (real bass sits
     // centered in a mix), unlike the fully-random pan the stochastic path
     // uses for the other voices.
-    void spawnGrainNow(float pitchRangeLow, float pitchRangeHigh, float timbre, float wander,
-                       float sustain, float dissonance, float attack, int rootSemitoneOffset) {
+    void spawnGrainNow(const HarmonicScale& scale, float pitchRangeLow, float pitchRangeHigh,
+                       float timbre, float wander, float sustain, float dissonance, float attack,
+                       int rootSemitoneOffset) {
         for (auto& grain : grains_) {
             if (grain.isActive()) {
                 continue;
@@ -174,7 +176,7 @@ public:
             // Same Dissonance blend as the stochastic path: 0 = fully
             // quantized to this voice's (rooted) consonant scale, 1 = fully
             // free/continuous.
-            const float quantizedPitch = HarmonicScale::quantize(rawPitch, rootSemitoneOffset);
+            const float quantizedPitch = scale.quantize(rawPitch, rootSemitoneOffset);
             const float pitch = quantizedPitch + (rawPitch - quantizedPitch) * dissonance;
 
             const float clampedSustain = std::max(0.0f, std::min(1.0f, sustain));
@@ -240,11 +242,12 @@ public:
     // chord tone's own pitch — same reasoning as the octave-only register
     // shift above: anything that isn't a discrete, scale-aware choice
     // risks landing off the shared key again.
-    void spawnChordNow(float pitchRangeLow, float pitchRangeHigh, float mode, float dirt,
-                       float thickness, float sustain, float dissonance, float voicing,
-                       int degree, int rootSemitoneOffset) {
-        const auto tones = ChordScale::chordTones(degree, /*seventh=*/true, rootSemitoneOffset,
-                                                   thickness, dissonance, random_);
+    void spawnChordNow(const HarmonicScale& scale, float pitchRangeLow, float pitchRangeHigh,
+                       float mode, float dirt, float thickness, float sustain, float dissonance,
+                       float voicing, int degree, int rootSemitoneOffset) {
+        const auto tones = ChordScale::chordTones(scale, degree, /*seventh=*/true,
+                                                   rootSemitoneOffset, thickness, dissonance,
+                                                   random_);
         const float low = std::min(pitchRangeLow, pitchRangeHigh);
         const float high = std::max(pitchRangeLow, pitchRangeHigh);
         const float rangeCenter = (low + high) * 0.5f;
@@ -282,8 +285,8 @@ public:
             if (toneIndex == melodyIndex && random_.nextFloat01() >= clampedVoicing) {
                 const float rawWander =
                     chordPitch + random_.nextFloatRange(-kMelodyWanderSpread, kMelodyWanderSpread);
-                pitch = HarmonicScale::quantize(std::max(0.0f, std::min(1.0f, rawWander)),
-                                                rootSemitoneOffset);
+                pitch = scale.quantize(std::max(0.0f, std::min(1.0f, rawWander)),
+                                       rootSemitoneOffset);
             }
             const float durationMs = std::max(
                 10.0f, centerDurationMs + random_.nextFloatRange(-jitterRangeMs, jitterRangeMs));
@@ -385,8 +388,9 @@ private:
     // pitch-drift-retarget effect Motion/Speed has via updateDrift() alone.
     // Speed=0 stretches duration out by kAmbientSlowDurationMultiple, so
     // "slow" is genuinely glacial rather than nearly the same as "fast".
-    void maybeSpawnAmbientGrain(float low, float high, float material, float speed, float complexity,
-                                float dissonance, float cleanliness, int rootSemitoneOffset) {
+    void maybeSpawnAmbientGrain(const HarmonicScale& scale, float low, float high, float material,
+                                float speed, float complexity, float dissonance,
+                                float cleanliness, int rootSemitoneOffset) {
         const float clampedComplexity = std::max(0.0f, std::min(1.0f, complexity));
         const float grainsPerSecond =
             kMinAmbientGrainsPerSecond +
@@ -406,7 +410,7 @@ private:
             const float hi = std::max(low, std::min(high, driftCenter_ + spread));
             const float rawPitch = random_.nextFloatRange(std::min(lo, hi), std::max(lo, hi));
 
-            const float quantizedPitch = HarmonicScale::quantize(rawPitch, rootSemitoneOffset);
+            const float quantizedPitch = scale.quantize(rawPitch, rootSemitoneOffset);
             const float pitch = quantizedPitch + (rawPitch - quantizedPitch) * dissonance;
 
             const float clampedSpeed = std::max(0.0f, std::min(1.0f, speed));
@@ -425,8 +429,9 @@ private:
     // since its grains also last seconds each, and Drift scaling grain
     // duration as the dominant audible effect (kHazeSlowDurationMultiple
     // stretches Drift=0 out relative to the configured/Drift=1 range).
-    void maybeSpawnHazeGrain(float low, float high, float texture, float drift, float complexity,
-                             float dissonance, float fuzz, int rootSemitoneOffset) {
+    void maybeSpawnHazeGrain(const HarmonicScale& scale, float low, float high, float texture,
+                             float drift, float complexity, float dissonance, float fuzz,
+                             int rootSemitoneOffset) {
         const float clampedComplexity = std::max(0.0f, std::min(1.0f, complexity));
         const float grainsPerSecond =
             kMinHazeGrainsPerSecond +
@@ -446,7 +451,7 @@ private:
             const float hi = std::max(low, std::min(high, driftCenter_ + spread));
             const float rawPitch = random_.nextFloatRange(std::min(lo, hi), std::max(lo, hi));
 
-            const float quantizedPitch = HarmonicScale::quantize(rawPitch, rootSemitoneOffset);
+            const float quantizedPitch = scale.quantize(rawPitch, rootSemitoneOffset);
             const float pitch = quantizedPitch + (rawPitch - quantizedPitch) * dissonance;
 
             const float clampedDrift = std::max(0.0f, std::min(1.0f, drift));

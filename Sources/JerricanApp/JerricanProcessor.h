@@ -12,8 +12,10 @@
 #include "FastRandom.h"
 #include "Grain.h"
 #include "GrainCloud.h"
+#include "HarmonicScale.h"
 #include "KeysChordPattern.h"
 #include "MeterTable.h"
+#include "ModeTable.h"
 #include "MidiBindingManager.h"
 #include "MidiPresetStore.h"
 #include "PatternClock.h"
@@ -464,6 +466,14 @@ public:
                             MeterTable::kMeters[static_cast<std::size_t>(index)].denominator);
                 break;
             }
+            // Same quantize-onto-a-fixed-set idiom as Meter above.
+            case MidiTarget::Mode: {
+                const int index = juce::jlimit(
+                    0, static_cast<int>(ModeTable::kModes.size()) - 1,
+                    static_cast<int>(value * static_cast<float>(ModeTable::kModes.size())));
+                requestMode(index);
+                break;
+            }
         }
     }
 
@@ -481,6 +491,15 @@ public:
         const int pendingMeter = pendingMeterIndex_.exchange(-1, std::memory_order_relaxed);
         if (pendingMeter >= 0) {
             applyMeterChange(pendingMeter);
+        }
+        // Same reasoning as Meter: rebuilding HarmonicScale's candidate
+        // table isn't a single atomic write, and it's read concurrently
+        // by every voice's quantize() calls below — queue it here and
+        // apply once per block rather than racing a torn write from the
+        // UI/MIDI thread.
+        const int pendingMode = pendingModeIndex_.exchange(-1, std::memory_order_relaxed);
+        if (pendingMode >= 0) {
+            applyModeChange(pendingMode);
         }
         if (pendingPhaseReset_.exchange(false, std::memory_order_relaxed)) {
             resetPatternPhase();
@@ -551,8 +570,9 @@ public:
                         onGridBoundary, currentSlot16_, voice.getBusy(), voice.getGroove(),
                         evolutionAmount, patternClock_.getSamplesPerSubdivision());
                     if (trigger.has_value() && playing && voice.isEnabled()) {
-                        cloud.spawnGrainNow(voice.getPitchRangeLow(), voice.getPitchRangeHigh(),
-                                            voice.getTimbre(), voice.getWander(), voice.getSustain(),
+                        cloud.spawnGrainNow(harmonicScale_, voice.getPitchRangeLow(),
+                                            voice.getPitchRangeHigh(), voice.getTimbre(),
+                                            voice.getWander(), voice.getSustain(),
                                             voice.getDissonance(), voice.getAttack(),
                                             voice.getRootSemitoneOffset());
                     }
@@ -574,9 +594,9 @@ public:
                     // grains spawn at all — Layers=0 must still mean
                     // "sparse", not double as the stop/start switch.
                     voiceSample = cloud.renderAmbientSample(
-                        voice.getPitchRangeLow(), voice.getPitchRangeHigh(), voice.getTimbre(),
-                        voice.getGroove(), voice.getWander(), voice.getVolume(), voice.getDissonance(),
-                        voice.getCleanliness(), playing && voice.isEnabled(),
+                        harmonicScale_, voice.getPitchRangeLow(), voice.getPitchRangeHigh(),
+                        voice.getTimbre(), voice.getGroove(), voice.getWander(), voice.getVolume(),
+                        voice.getDissonance(), voice.getCleanliness(), playing && voice.isEnabled(),
                         voice.getRootSemitoneOffset());
                 } else if (i == 3) {
                     // Haze: Drift scales grain duration (GrainCloud::
@@ -591,9 +611,9 @@ public:
                     // EvolutionEngine/MidiBindingManager/PresetState all
                     // already carry this field for every voice.
                     voiceSample = cloud.renderHazeSample(
-                        voice.getPitchRangeLow(), voice.getPitchRangeHigh(), voice.getTimbre(),
-                        voice.getGroove(), voice.getWander(), voice.getVolume(), voice.getDissonance(),
-                        voice.getAttack(), playing && voice.isEnabled(),
+                        harmonicScale_, voice.getPitchRangeLow(), voice.getPitchRangeHigh(),
+                        voice.getTimbre(), voice.getGroove(), voice.getWander(), voice.getVolume(),
+                        voice.getDissonance(), voice.getAttack(), playing && voice.isEnabled(),
                         voice.getRootSemitoneOffset());
                 } else if (i == 2) {
                     // Keys: a chord-comping keyboard voice — Piano<->Organ
@@ -628,11 +648,12 @@ public:
                         onGridBoundary, currentSlot16_, voice.getBusy(), voice.getGroove(),
                         evolutionAmount, patternClock_.getSamplesPerSubdivision());
                     if (trigger.has_value() && playing && voice.isEnabled()) {
-                        cloud.spawnChordNow(voice.getPitchRangeLow(), voice.getPitchRangeHigh(),
-                                            voice.getTimbre(), 1.0f - voice.getCleanliness(),
-                                            voice.getWander(), voice.getSustain(),
-                                            voice.getDissonance(), voice.getAttack(),
-                                            trigger->degree, voice.getRootSemitoneOffset());
+                        cloud.spawnChordNow(harmonicScale_, voice.getPitchRangeLow(),
+                                            voice.getPitchRangeHigh(), voice.getTimbre(),
+                                            1.0f - voice.getCleanliness(), voice.getWander(),
+                                            voice.getSustain(), voice.getDissonance(),
+                                            voice.getAttack(), trigger->degree,
+                                            voice.getRootSemitoneOffset());
                     }
                     // Thickness (getWander()) doubles as the correlation-
                     // wander input: tight/close voicings are more
@@ -756,6 +777,7 @@ public:
         preset.tempo = tempo_.load(std::memory_order_relaxed);
         preset.meterNumerator = meterNumeratorDisplay_.load(std::memory_order_relaxed);
         preset.meterDenominator = meterDenominatorDisplay_.load(std::memory_order_relaxed);
+        preset.mode = modeDisplay_.load(std::memory_order_relaxed);
         return preset;
     }
 
@@ -806,6 +828,7 @@ public:
         masterVolume_.store(preset.masterVolume, std::memory_order_relaxed);
         setTempo(preset.tempo);
         requestMeter(preset.meterNumerator, preset.meterDenominator);
+        requestMode(preset.mode);
     }
 
     void resetVoicesToInitialState() {
@@ -831,8 +854,9 @@ public:
                                           initial.busy, initial.sustain, initial.cleanliness,
                                           initial.attack);
         }
-        // Same "back to defaults" contract for the time signature.
+        // Same "back to defaults" contract for the time signature and Mode.
         requestMeter(4, 4);
+        requestMode(0);
     }
 
     // The four transport actions — shared by a mouse click (via the
@@ -958,6 +982,19 @@ public:
     // Preset state — a lightweight "resync the clock" independent of Reset.
     void requestPhaseReset() { pendingPhaseReset_.store(true, std::memory_order_relaxed); }
 
+    // Queues a Mode (scale) change, consumed on the audio thread at the
+    // top of the next processBlock (see applyModeChange) — same reasoning
+    // as requestMeter: rebuilding HarmonicScale's table isn't a single
+    // atomic write. Clamped to a valid index the same way applyModeChange
+    // itself clamps, so an out-of-range MIDI-derived index can't crash.
+    void requestMode(int modeIndex) {
+        pendingModeIndex_.store(
+            juce::jlimit(0, static_cast<int>(ModeTable::kModes.size()) - 1, modeIndex),
+            std::memory_order_relaxed);
+    }
+
+    int modeDisplay() const { return modeDisplay_.load(std::memory_order_relaxed); }
+
     int meterNumeratorDisplay() const { return meterNumeratorDisplay_.load(std::memory_order_relaxed); }
     int meterDenominatorDisplay() const { return meterDenominatorDisplay_.load(std::memory_order_relaxed); }
     int currentSlot16Display() const { return currentSlot16Display_.load(std::memory_order_relaxed); }
@@ -987,6 +1024,13 @@ private:
     // bassGroovePattern_ onto it, and forces a fresh mask (the old one was
     // sized/shaped for the previous meter). Only ever called from the
     // audio thread (top of processBlock), so no locking needed.
+    // Only ever called from the audio thread (top of processBlock), so no
+    // locking needed — same contract as applyMeterChange.
+    void applyModeChange(int modeIndex) {
+        harmonicScale_.setMode(modeIndex);
+        modeDisplay_.store(modeIndex, std::memory_order_relaxed);
+    }
+
     void applyMeterChange(int meterIndex) {
         const auto& meter = MeterTable::kMeters[static_cast<std::size_t>(meterIndex)];
         currentBassAccentProfile_ = MeterTable::generateBassAccentProfile(meter);
@@ -1106,6 +1150,14 @@ private:
     std::atomic<int> pendingMeterIndex_{-1};
     std::atomic<bool> pendingPhaseReset_{false};
     std::atomic<float> tempo_{120.0f};
+
+    // The one shared scale every voice's Dissonance quantizes toward, and
+    // Keys' chords are built from — see HarmonicScale.h/ModeTable.h. Mode
+    // 0 (Pentatonic) matches the original hardcoded scale exactly, so
+    // this needs no migration for anything saved before Mode existed.
+    HarmonicScale harmonicScale_;
+    std::atomic<int> modeDisplay_{0};
+    std::atomic<int> pendingModeIndex_{-1};
 
     std::atomic<bool> isPlaying_{false};
     std::atomic<bool> hostSyncEnabled_{false};
